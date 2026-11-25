@@ -1,17 +1,14 @@
 # Builds vpk_tool for Windows and macOS on GitHub's own machines, so nobody needs a Mac.
-# Put this file in your repo as  .github/workflows/build.yml  and set WORKDIR to the folder that holds vpk_tool.py
-# (e.g. tools/vpk_tool).  Then: Actions tab > "Build vpk_tool" > Run workflow  (or push a tag like v1).  Download the files under "Artifacts".
+# Put this file in your repo as  .github/workflows/build.yml.  'vpk_tool' below (3 places + 2 artifact paths) is the folder that holds vpk_tool.py.  Then: Actions tab > "Build vpk_tool" > Run workflow  (or push a tag like v1).  Download the files under "Artifacts".
 name: Build vpk_tool
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
-env:
-  WORKDIR: vpk_tool
 jobs:
   windows:
     runs-on: windows-latest
-    defaults: {run: {working-directory: "${{ env.WORKDIR }}"}}
+    defaults: {run: {working-directory: vpk_tool}}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,15 +19,15 @@ jobs:
           --add-data "assets;assets" --collect-all moderngl --collect-all glcontext --collect-all pyopengltk
           --collect-submodules OpenGL --hidden-import OpenGL.platform.win32 --name vpk_tool vpk_tool.py
       - uses: actions/upload-artifact@v4
-        with: {name: vpk_tool-windows, path: "${{ env.WORKDIR }}/dist/vpk_tool.exe"}
+        with: {name: vpk_tool-windows, path: "vpk_tool/dist/vpk_tool.exe"}
   macos:
     strategy:
       matrix:
         include:
-          - {os: macos-14, name: apple-silicon}      # M1 / M2 / M3 Macs
-          - {os: macos-13, name: intel}              # Intel Macs
+          - {os: macos-latest, name: apple-silicon}  # M1 / M2 / M3 / M4 Macs (macos-latest is the current Apple Silicon image)
+          - {os: macos-15-intel, name: intel}        # Intel Macs (if GitHub renames this runner, change the label; delete the line if you do not need Intel)
     runs-on: ${{ matrix.os }}
-    defaults: {run: {working-directory: "${{ env.WORKDIR }}"}}
+    defaults: {run: {working-directory: vpk_tool}}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,4 +36,4 @@ jobs:
       # a quick look at what OpenGL the runner gives (informational; the runner has no real GPU, so this may fail)
       - run: python3 gl_viewport.py info || true
       - uses: actions/upload-artifact@v4
-        with: {name: "vpk_tool-macos-${{ matrix.name }}", path: "${{ env.WORKDIR }}/dist/vpk_tool-mac.zip"}
+        with: {name: "vpk_tool-macos-${{ matrix.name }}", path: "vpk_tool/dist/vpk_tool-mac.zip"}
