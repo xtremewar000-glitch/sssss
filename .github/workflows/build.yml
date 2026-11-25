@@ -7,7 +7,7 @@ on:
   push:
     tags: ["v*"]
 env:
-  WORKDIR: tools/vpk_tool
+  WORKDIR: vpk_tool
 jobs:
   windows:
     runs-on: windows-latest
