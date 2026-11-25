@@ -1,0 +1,304 @@
+VPK Tool v11 - UI refresh
+========================
+
+This package refreshes the desktop shell and the Models (WPK) editor layout.
+The work is limited to presentation and navigation; WPK/VPK parsing, import,
+export, rendering, copy-to-kit, texture handling, and save callbacks are retained.
+
+Main workspace
+--------------
+- Left-side workspace navigation and grouped pages.
+- Consistent dark workshop theme for the main application shell.
+- Existing pages retained: Stickers, Vehicle Models, Backfire, Wheels, Lamps,
+  Meters, and Engine Sound.
+
+Models (WPK) editor
+-------------------
+- Compact car / aero-kit selector and WPK open action.
+- Source folders consolidated into one horizontal locations panel.
+- Part inventory separated from the 3D preview.
+- Part actions grouped together: export, replace, add, move tag, copy to kits,
+  delete, visibility, and undo.
+- Model utilities grouped separately: textures, shadow, gloss, lights, windows,
+  arcade import, FBX conversion, livery, paint colours, and arcade rebuild.
+- Preview controls grouped beneath the preview.
+- Save, Save As, and Bake AO remain in the footer.
+
+Validation
+----------
+- All Python modules pass py_compile.
+- Models (WPK) tab instantiates under Tk/Xvfb.
+- A sample WPK opens and populates the part inventory and preview.
+- No game data or binary formats are modified by this UI-only update.
+
+Notes
+-----
+The redesign preserves the existing editor functions and callbacks. It does not
+add new model conversion or game compatibility features.
+
+FBX import workflow
+-------------------
+- The FBX replace dialog now shows a detected-part inventory with mesh counts
+  before import (body, wheels, wing variants, and bonnet variants).
+- Source variant selection is presented separately and lists only aero kits
+  detected in the FBX.
+- Whole-car replacement now asks for confirmation and summarizes the source
+  variant and detected parts before changing the open WPK.
+- Clearing the destination car's old lamps, mirrors, wing, and bonnet options
+  is now opt-in rather than enabled by default.
+- Selected-part import checks that the FBX actually contains that part before
+  beginning the replacement.
+
+Validation for this pass
+------------------------
+- All Python modules pass py_compile.
+- Tk UI construction passes under Xvfb.
+- A sample WPK opens and loads its part inventory under Xvfb.
+- No sample FBX was present in the supplied project files, so the new FBX
+  dialog and real FBX parsing could not be exercised end-to-end here.
+
+FBX mapping preview follow-up (2026-11-25)
+-----------------------------------------
+- The FBX Replace dialog now lists each detected source mesh path beside its destination WPK part tag.
+- Changing Stock / Aero A / Aero B / Aero C refreshes the mapping preview, so the selected source variant is visible before import.
+- Added fbx2wpk.fbx_mapping() as a read-only preview helper; the import operation still uses the same fill_pack path.
+- Corrected split_parts() so Wheel_FL/FR/RL/RR meshes are mapped only to their wheel chunks and are not also included in the body chunk.
+- Validation: all Python modules compile; WPK tab Tk construction passes; synthetic hierarchy mapping test confirms body, wheel, wing and bonnet destinations.
+- Limitation: no representative FBX was available in the project files, so a real-world FBX import still needs testing.
+
+FBX 3D preview follow-up (2026-11-25)
+- Added an axonometric mesh preview to the FBX Replace dialog, beneath the source-mesh mapping table.
+- The preview reads only FBX hierarchy paths assigned by the current Stock / Aero A/B/C mapping; changing the source variant refreshes both the mapping and rendered geometry.
+- Uses the existing binary FBX reader and a lightweight Tk Canvas triangle renderer, with a triangle cap for responsiveness on large files. No external renderer or FBX SDK added.
+- Preview failures are non-blocking: the import workflow remains available and the preview displays an explanatory message.
+- Validation: all Python modules compile; Tk root smoke test passes; a generated binary FBX geometry read test confirms vertices and triangle groups are available to the renderer.
+- Limitation: no representative real arcade FBX was supplied, so hierarchy-specific mesh selection and visual appearance still need an end-to-end check with one.
+
+Milestone 4 - Asset Browser + interactive viewport + Properties + operation log
+================================================================================
+New file: wpk_browser.py (pure Python/numpy, no Tk). Changed: wpk_edit.py (Models tab layout + new methods only).
+New: tests/ (synth.py, faketk.py, test_browser.py, test_ui_faketk.py).  Run:  python tests/test_browser.py  and  python tests/test_ui_faketk.py
+
+User-visible
+- Models tab is three resizable columns: ASSET BROWSER | 3D VIEWPORT | PROPERTIES (+ Model tools), with an OPERATION LOG strip below.
+- Asset browser: grouped tree (Body / Wheels / Wing / Bonnet / Lights / Mirrors / Exhaust / Other), search by name, tag (0x122 or 290,
+  every word must match) or texture name, category chips, per-part visibility dot (click it), draws + triangle counts, multi-select,
+  group header selects its parts, empty states for "no WPK" / "no match".
+- Viewport: drag = orbit (switches to the Free view), right-drag or Shift-drag = pan, wheel = zoom, double-click / "Fit / reset camera" = fit.
+  Click a part = select it (Ctrl/Shift = add/remove); the browser follows and clears any filter that would hide it.  The selected part is
+  tinted + outlined from the last picture's per-pixel part map (no re-render).  Fixed views (Front 3/4 ... Top) still work and reset the framing.
+  While the mouse moves the picture is drawn at half size, then redrawn full size; stale pictures are cancelled.
+- Properties (read-only except visibility): name, tag/hex, category, "not drawn by the game engine" flag, draws / vertices / triangles,
+  size + centre (model units), material rows (texture, blend, triangles), texture references with size, format and status
+  (ok / borrowed (stock pack) / MISSING).
+- Operation log: info / success / warning / error lines with time, progress bar for the picture being drawn, error detail text
+  (tracebacks for draw failures), Copy all / Clear / Hide.  Logged: open, save (+ .bak), Copy to kits per destination file and
+  partial failures, move-tag refusal, Bake AO, draw errors.
+
+Preserved (not edited): Pack/Chunk/Batch, serialisation, tag assignment, copy_parts, move_part, replace/import code, textures, save/.bak.
+All existing buttons keep their callbacks; Part actions and Model tools moved to the left / right columns (2-column grids).
+Behaviour differences to know about:
+- The preview is now always framed from the parts' bounding boxes (needed so pan/zoom are consistent); the default framing can
+  differ a little from before.
+- "Show / hide" now redraws without re-decoding textures (render(reuse=True)); every edit still rebuilds the model.
+- After Add part the new row is selected through select_tag(), which clears a search/filter that would hide it.
+
+Validation done (sandbox without Tk)
+- py_compile of every module; pyright finds no undefined names in the Tab class.
+- tests/test_browser.py (12 tests): categories, rows, search/filter, camera maths, picking against the REAL rasterizer's per-pixel batch
+  map on a synthetic WPK3 written and re-read through wpk_edit.Pack, overlay, part info, log; load -> to_bytes is byte-identical.
+- tests/test_ui_faketk.py (13 tests): the REAL Tab code driven through a fake tkinter: empty states, open, browser population, search/chips,
+  browser->props/overlay, viewport pick->browser (incl. through a filter), visibility is preview-only and leaves the WPK bytes unchanged,
+  orbit/pan/zoom/fit, kit switch, delete/undo, Save As byte-identical, open-error and draw-error logging.
+
+NOT validated
+- Nothing was run in real Tk: layout, sash sizes, fonts, colours, focus/tab order, mouse feel and performance are unverified.
+  No screenshot of the running application exists yet.
+- No real car WPK, FBX or OBJ, and no multi-kit car with real wing/bonnet options was available.
+- Existing flows (Export OBJ, Replace OBJ, Add part, Move tag dialog, Copy to kits dialog, textures, gloss, FBX import/preview,
+  livery) were not re-run end to end; their code is unchanged apart from the log calls listed above.
+
+Known limitations
+- No wireframe mode or grid/axes (the software rasteriser has no wireframe path).
+- Glass / see-through batches are drawn but not pickable (they are not written to the pick map).
+- Hidden parts cannot be picked or highlighted; the Properties panel still shows them.
+- Part name, tag, materials and textures are shown read-only: the only editing paths remain the existing dialogs.
+- Position/offset is shown as the bounding box centre; import/source information is not stored in a WPK, so it is not shown.
+- No thumbnails, no Redo, no layout persistence (Milestone 6).
+
+Real-file validation (added after Milestone 4 coding; still NOT run in real Tk)
+- Data: carss1.zip, 105 real car WPKs (stock + aero A/B/C kits; the last entry nis_R35_specV_aeroC.wpk was cut off in the upload).
+  carss2.zip is not a readable ZIP (bad header) and was not used.
+- All 105 load. 28 re-serialise byte-identical; 77 re-serialise to the same size with a different layout but identical chunks,
+  geometry and textures after reload. The ORIGINAL wpk_edit.py produces exactly the same bytes, so this is existing Pack behaviour,
+  not a change from this work (worth knowing for "safe save", not fixed here).
+- nis_BNR34 (stock + aero A/B/C) driven through the Models tab code with a fake Tk: opens (18,492 triangles, 25 parts, 7 categories),
+  full frame 0.18 s and half-size orbit frame 0.07 s at 640x360 (software rasteriser, this sandbox's CPU), click-pick returns the
+  right part for every visible part, kit switch to Aero B keeps tag 0x122 selected and shows that kit's data, aero textures report
+  "borrowed (stock pack)", wing shown/hidden changes the visible set, Save As of an unmodified kit is geometry-identical.
+- Still not done: real FBX/OBJ import, and anything in real Tk (layout, visuals, mouse feel).
+
+
+Milestone 5 - Textures and materials window
+===========================================
+New file: wpk_texmgr.py (pure Python/numpy/PIL, no Tk; only READS a Pack).  Changed: wpk_edit.py (the Textures window, a few hooks).
+New tests: tests/test_texmgr.py, tests/test_ui_texdlg.py, tests/regress_ops.py.
+
+User-visible (Models tab > Textures...; also double-click a texture in the Properties panel)
+- One window instead of the plain list: search (name, size such as 256x256, format such as 565, status, part name or tag such as 0x122),
+  quick filter (All / In use / Unused / Borrowed / Missing / Paint copies / Problems), counts line (unused / borrowed / problems).
+- Per texture: size, format (RGB565 / RGBA4444 / RGBA5551), status (ok / borrowed from the stock pack / MISSING / BAD DATA, plus
+  unused, paint copy, orphan paint copy, duplicate name, odd size) and which parts draw it and how (picture / reflection / specular).
+- Preview decoded on demand (never all at once), cached (LRU, keyed by a checksum of the data so an edit can never show a stale picture),
+  on a checkerboard / dark / light background so transparency is visible.  A borrowed texture previews from the stock pack.
+- "Select parts in browser" selects the parts that draw the chosen texture(s).  "Report..." lists every problem and copies it.
+- Replace from picture...: replaces exactly the selected slot (same name; no typing).  It asks first, with the facts, when the texture is
+  shared (several parts, used as reflection/specular map, has paint copies p1..p5, or Aero kits beside the file borrow it) or when the
+  picture would lose transparency; it shows the size/format it will be written as.  Simple unshared replaces just happen.
+- Add new from picture...: as before, but a name that differs from an existing one only by extension asks first (it would be a SEPARATE
+  texture that no part uses).  The default name is no longer the selected texture's name.
+- Delete...: as before, plus the paint-copy and aero-kit warnings.  Export PNG... as before, errors are reported instead of raised.
+- Every change snapshots first (Undo works), logs to the operation log, and marks the document modified.  Nothing is saved until Save.
+- The window follows undo, open and kit switches.
+
+Behaviour difference worth knowing
+- The old Textures list called the paint copies (p1:..p5:name) "(unused)" and the delete prompt said "Nothing uses them".  The game picks
+  them by name, so they are now shown as "paint copy" and never as unused.  On the 105 real cars supplied: 1610 textures, 344 of them paint copies.
+
+Reused, not changed: Pack.add_texture, Pack.delete_textures, Pack.save (+ .bak), decode_tex, encode16, kit_files, stock_pack_of.
+Not added: editing material assignments (a draw's texture / blend / shader).  Materials are listed read-only (Properties panel and the
+"used by" list).  No new texture formats: only what encode16 / decode16 already handle.
+
+Validation (this sandbox has no tkinter, so nothing ran in real Tk)
+- py_compile of every module.  tests/test_browser.py 12, tests/test_ui_faketk.py 13, tests/test_texmgr.py 17 (11 synthetic + 6 on real cars,
+  set VPK_REAL_CARS=<folder>), tests/test_ui_texdlg.py 13 (the real dialog code through a fake tkinter).
+- tests/regress_ops.py on real nis_BNR34 (stock + Aero A/B/C) with the Milestone-4 wpk_edit.py and the current one: every output hash is
+  identical (open, export OBJ + FBX, replace from OBJ + FBX, add part, move tag, copy to kits, delete part, delete / replace texture, save + .bak, CLI),
+  and 13 semantic checks pass (round-trip triangle counts, copied wing arrives, .bak is the original, untouched files unchanged).
+- Real data: all 105 readable WPKs give a clean texture catalogue (0 dangling references, 0 missing, 0 unused); every texture of the first 40
+  cars previews; kit_borrowers finds Aero A/B/C on the real stock pack.
+
+NOT validated
+- Real Tk: layout, fonts, colours, pane sizes, focus / tab order, how the preview looks and feels.  No screenshot of the running app exists.
+- Real FBX/OBJ from a representative vehicle (the round trips use this tool's own exports) - import validation of a third-party model is pending.
+- nis_R35_specV_aeroC.wpk is cut off in the uploaded zip and was skipped.  carss2.zip was not supplied this time.
+- Loading a changed WPK in the game.
+
+Known limitations
+- Replacing a texture in a STOCK pack changes it for every aero kit that borrows it by name (the window says which kits); it does not edit the kit files.
+- Aero-kit scan reads the sibling files from disk (about 20 ms for a car); it does not see unsaved edits in other kits.
+- Paint copies are not regenerated when their base texture is replaced; they stay as they were (the window says so).
+- No wireframe/grid in the viewport (carried over from Milestone 4), no thumbnails, no Redo, no layout persistence (Milestone 6).
+
+
+Milestone 6 - global polish
+===========================
+New file: vpk_ui.py (palette, theme, confirmation wording, keyboard-shortcut table, panel-layout and window-geometry rules).
+Changed: vpk_tool.py (theme call, menus, shortcuts, window prefs), wpk_edit.py (layout persistence, confirmations, button styles),
+wheels_tab.py / lamp_edit.py / meters_edit.py (discard + delete confirmations), and text colours in all tab files.
+New tests: tests/test_ui_m6.py (21).  tests/faketk.py gained a root window, menu recorder, ttk.Style recorder and tkinter.font (test scaffolding only).
+
+User-visible
+- Theme: the colours the main window already used are now defined once (vpk_ui.apply_theme) and extended to widgets that had no dark
+  style (paned-window sashes, progress bars, separators, spinboxes, menu buttons, toggle "chips", disabled entries / comboboxes),
+  and to plain dialogs: every dialog window gets the dark background and combobox drop-down lists are dark too.
+  Button hierarchy: Primary (blue: "Save to game"), default (secondary), Danger (red: Delete part, Delete textures).
+- Readability fix: 63 text colours in the tabs were light-theme greys / reds (#333, #555, #777, #b00020 ...) on the dark background,
+  e.g. the status line of the Lamps and Meters tabs.  They now use the palette's soft / muted / error / success / warning colours.
+- Menus: new "Models" menu (open, save, save as, undo, delete, search, fit camera, textures, export OBJ, log) and "Go" menu (the pages),
+  every entry showing its shortcut; Help > Keyboard shortcuts (F1) lists them all.  One table (vpk_ui.SHORTCUTS) drives the key bindings,
+  the menu text and the help window, so they cannot disagree.
+    Ctrl+O open, Ctrl+S save (any page)      Ctrl+Shift+S save as, Ctrl+Z undo, Delete delete part(s), Ctrl+F search browser,
+    Ctrl+0 fit camera, Ctrl+T textures, Ctrl+E export OBJ, Ctrl+L log (Vehicle Models page)      Ctrl+1..7 pages      F1 help
+  Ctrl+Z / Delete are ignored while a text box has the focus (the box keeps its own undo / delete).
+- Bug fixed: Ctrl+O / Ctrl+S on ANY page except the stickers used the Models tab (Ctrl+S on Wheels or Lamps saved the Models car).
+  They now act on the page in front; a page without that action does nothing.
+- Window: size, position and maximised state are remembered (position is pulled back on screen if the monitor / resolution changed;
+  an older settings file with only a size still works).
+- Models tab: the widths of the three panels and whether the operation log is open are remembered; the minimum sizes (browser 220,
+  viewport 360, inspector 240) are kept after dragging AND when the window is resized (a saved layout from a bigger screen is clamped).
+- Dialogs get a minimum size equal to their natural size (so shrinking a dialog cannot hide its controls), at most 85% of the screen.
+- Confirmations: one wording (question, bullet facts, consequence, "Undo brings it back." / "This cannot be undone.") for: delete part(s),
+  delete / replace texture, delete lamp pieces, Undo all changes (stickers), and the "unsaved changes" question of the Models, Lamps,
+  Meters and Wheels tabs (the sticker tab keeps its own Save / Don't save / Cancel question).
+
+Not changed: any WPK / VPK data, serialisation, save / .bak behaviour, command-line behaviour (the regression harness gives identical
+hashes for the Milestone-4, -5 and -6 code on real nis_BNR34).
+
+Validation (still no real Tk in this sandbox)
+- py_compile of all modules; tests: test_browser 12, test_ui_faketk 13, test_ui_texdlg 13, test_texmgr 17 (6 on real cars), test_ui_m6 21
+  (11 pure rules + the WHOLE application window built through a fake tkinter: theme calls, menu bar, key routing per page, typing guard,
+  saved geometry / layout, confirmation text).  Two deliberate code breaks (old key routing, no pane clamp) were caught by the tests.
+- tests/regress_ops.py: M5 code vs M6 code on real cars: every hash identical.
+
+NOT validated / not done
+- Real Tk: how the theme, sashes, menus and accelerator labels look; whether <Control-Shift-S>, <Control-0>, <Delete> arrive on your
+  keyboard layout; sash behaviour while dragging; the dialog minimum-size hook (relies on wm minsize returning 1 1 for "unset");
+  focus order / Tab navigation.  No screenshot of the running app exists.
+- Light theme (marked optional): not done.
+- Other confirmations (replace OBJ, kits copy, whole-car import ...) keep their own, already detailed, wording.
+
+Milestone 6 follow-up: unified states + Linux maximised window
+--------------------------------------------------------------
+- vpk_ui.StatusLine replaces the plain text status variable on EVERY page (Stickers, Models footer, Backfire, Wheels, Lamps, Meters, Engine).
+  It keeps the old .set(text) / .get() calls working and adds an optional level: set(text, "error").  Six states, one look everywhere:
+  empty (muted, nothing open yet), loading (blue, "◌" + a small busy bar), info, success (green "✔"), warning (orange "⚠"), error (red "✖").
+  Glyphs mean colour is never the only cue.  Without a level the wording is classified (vpk_ui.classify): "Open a car first." = warning,
+  "Cannot ... / Could not ..." = error, "Reading ... / Looking for ..." = loading, "Saved / Opened / Wrote ..." = success.
+  Exceptions shown in the Lamps / Meters tabs are passed as errors explicitly; Meters preview notes are warnings; an empty Wheels folder is a warning.
+- Linux: a maximised window is now detected (vpk_ui.window_state: Tk state, then the X11 "-zoomed" attribute, then "window covers the screen"
+  as a last resort) and remembered; restoring uses vpk_ui.set_maximised (state("zoomed"), else attributes("-zoomed")).  The UV "big window"
+  maximise button and its saved size use the same helpers.
+- Tests: tests/test_status_states.py (13).  All earlier suites still pass (test_ui_m6 21, test_ui_faketk 13, test_ui_texdlg 13, test_browser 12, test_texmgr 17).
+- NOT validated: real Tk (how the busy bar and glyphs look; whether your window manager reports "-zoomed"); the size fallback can mis-detect a
+  window you dragged to fill the whole screen without maximising it (harmless: it reopens maximised).
+- Redo, thumbnails, wireframe / grid in the viewport: still not implemented.
+
+v15 merge
+---------
+Compared the real vpk_tool_merged_v15.zip against this tree file by file.  The only v15 content this tree lacked was in livery.py
+(3-texel edge-row paint fix, flat-shader / plate / lamp / rubber / exhaust skipping, paint-like test for non-main textures, whole-texture
+repaint only for really dark paint, small wing / bonnet paint copies in other slots); that file is now v15's, and its README notes are added.
+Everything else in v15 was already here (wpk_edit core functions are identical; the v15 Textures list is replaced by the Milestone 5 window,
+which has multi-select Delete).  The fbx2wpk wheel-split fix / fbx_mapping() from the UI work is kept.
+NOT run: livery against real cars (only a synthetic check of the new helpers), in-game paint.
+
+Car preview window on small screens
+-----------------------------------
+The Car panel (Paint, Texture, Aero kit, Wing ... Wheels = 11 combo boxes) was one tall column, so on a 1360 x 768 screen the controls took
+about 2/3 of the window and the picture shrank to ~200 px.  It is now two columns (6 + 5 rows) and gets a wider share of the window
+(panel widths 5 : 4 : 4), which gives the picture back roughly 160 px of height.  Not run in real Tk: check the combo boxes are wide enough.
+
+Models viewport: steady camera
+------------------------------
+The framing was recomputed from the car's PROJECTED bounding box at every redraw, so the car's centre and size changed with the angle: the
+car drifted and "breathed" while dragged.  wpk_browser.view_extent now fits the car's bounding SPHERE (all parts, hidden ones included,
+92% of the radius): the centre stays at the picture centre and the scale is the same from every angle, so orbiting only turns the car.
+Test: test_browser.test_fit_does_not_move_while_orbiting.  Side effect: a side-on car is ~10% smaller than before (zoom with the wheel).
+Not run in real Tk / on a real car; mouse feel unverified.
+
+Models viewport: live dragging + 360 degree orbit
+-------------------------------------------------
+Why it only moved on release: every mouse move started a NEW picture and cancelled the one being drawn, so while dragging no picture ever
+finished (the drawing takes longer than the gap between two mouse events); the result was polled only every 80 ms as well.
+Now: one picture is drawn at a time and a drag keeps only the NEWEST camera; the moment a frame is done the next one starts from the current
+mouse position (pump polls every 10 ms while drawing).  Drag frames skip the pick map / selection outline and swap the picture in place
+(no clear + redraw flicker); the drag resolution adapts to the speed (1/1 .. 1/5 size, aiming at ~30 pictures a second), and the sharp
+full-size picture (with the selection outline) follows 220 ms after the mouse rests.
+Camera: orbit is a full 360 degrees on both axes (no stop at the poles); upside down, a drag to the right still turns the car to the right.
+Tests: test_ui_faketk 07b (a drag never cancels the frame in flight, newest camera drawn next, pick map kept) and 07c (over the top).
+Measured on the synthetic car only (900x500 77 ms, 450x250 18 ms, 300x167 9 ms per frame); a real 18k-triangle car and the real Tk feel are NOT measured.
+
+Wheel over a viewport no longer scrolls anything else
+-----------------------------------------------------
+Two global wheel handlers (bind_all) also fired for a wheel turned over a picture, so a scroll bar moved while zooming.
+The viewport wheel handlers (Models viewport, Car preview, UV big window) now return "break", which stops Tk passing the event on, and the
+Textures / materials table's wheel handler only scrolls while the pointer is over that table.  Not run in real Tk.
+
+GPU viewport on macOS: off-screen mode
+--------------------------------------
+gl_viewport.mode() picks "direct" (pyopengltk frame; Windows / Linux) or "offscreen" (macOS, or pyopengltk missing, or VPK_GL_MODE=offscreen).
+OffscreenGLViewport = the same Renderer drawing into a standalone moderngl context's framebuffer; each frame is read back, flipped and
+shown on a Tk canvas (PhotoImage.paste when the size is unchanged).  Same interface as GLViewport, so wpk_edit only calls
+GLV.create_viewport(...).  requirements-gpu.txt skips pyopengltk on macOS; build_mac.sh bundles moderngl / glcontext.
+Tests: tests/test_gl_offscreen.py (8, fake GL).  NOT run: real OpenGL, a real Mac, Retina sharpness, PyInstaller bundling of glcontext.

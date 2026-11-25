@@ -1,0 +1,2 @@
+moderngl
+pyopengltk; sys_platform != "darwin"
