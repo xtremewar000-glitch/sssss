@@ -2,6 +2,7 @@
 (theme calls, menu bar, keyboard routing, saved window / panel layout, confirmation wording).
 NOT a visual test: how the dark theme, sashes and menus actually look in real Tk is unverified."""
 import json, os, sys, types, unittest
+os.environ.setdefault("VPK_VIEWPORT", "soft")      # these tests drive the software viewport (the GPU one has tests/test_gl_*.py)
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
 from test_ui_faketk import MB, TMP, faketk
@@ -142,6 +143,15 @@ class App(unittest.TestCase):
         self.assertEqual(c["VPK.Primary.TButton"]["background"], UI.ACCENT)
         self.assertEqual(c["TButton"]["background"], "#202a38")                      # the colours the app already used are unchanged
         self.assertIn(("*Toplevel.background", UI.BG), self.root.options)          # dialogs follow the theme
+        opts = set(self.root.options)
+        for item in (("*Text.background", UI.PANEL), ("*Entry.background", UI.INPUT),
+                     ("*Listbox.background", UI.PANEL), ("*Canvas.background", UI.BG),
+                     ("*Menu.background", "#111925")):
+            self.assertIn(item, opts, item)                                         # classic Tk controls never fall back to white
+        for name in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
+            self.assertIn(name, faketk.Style.conf)
+            self.assertEqual(faketk.Style.conf[name]["lightcolor"], "#26364a")
+            self.assertEqual(faketk.Style.conf[name]["darkcolor"], "#26364a")
         self.assertIn(("Toplevel", "<Map>"), self.root.class_binds)
 
     def test_02_dialog_minsize_hook(self):
@@ -165,7 +175,7 @@ class App(unittest.TestCase):
 
     def test_03_menu_bar_shows_every_shortcut(self):
         m = self.menus()
-        self.assertEqual(list(m), ["File", "Edit", "View", "Models", "Go", "Help"])
+        self.assertEqual(list(m), ["File", "Edit", "View", "Models", "Go", "Size", "Help"])
         shown = {e[1]["label"]: e[1].get("accelerator") for e in m["Models"].entries if e[0] == "command"}
         self.assertEqual(shown["Save as…"], "Ctrl+Shift+S"); self.assertEqual(shown["Undo"], "Ctrl+Z")
         self.assertEqual(shown["Delete selected part(s)"], "Delete"); self.assertEqual(shown["Textures and materials…"], "Ctrl+T")
@@ -175,8 +185,10 @@ class App(unittest.TestCase):
             if sid not in ("open", "save"):                                      # (the File menu keeps its older 'Ctrl+O' in the label)
                 self.assertIn(text, in_menus, sid)
             self.assertIn(seq, self.root._b)
-        go = [e[1]["label"] + "|" + e[1]["accelerator"] for e in m["Go"].entries]
-        self.assertEqual(go[:3], ["Livery & Stickers|Ctrl+1", "Vehicle Models|Ctrl+2", "Backfire|Ctrl+3"])
+        go = [e[1]["label"] + "|" + e[1].get("accelerator", "") for e in m["Go"].entries if e[0] == "command"]
+        self.assertEqual(go[:3], ["Livery & Stickers|Ctrl+1", "Vehicle Models|Ctrl+2", "Wheels|Ctrl+3"])
+        self.assertIn("Vehicle Models  >  Backfire flames|", go)                      # Backfire and Lamps are modules of the Models page
+        self.assertIn("Vehicle Models  >  Lamps|", go)
 
     def test_04_every_models_menu_command_exists_on_the_tab(self):
         for e in self.menus()["Models"].entries:
@@ -195,13 +207,15 @@ class App(unittest.TestCase):
         a.save = lambda: hits.append("stickers")
         a.models.save = lambda: hits.append("models")
         a.wheels.save = lambda: hits.append("wheels")
-        a.lamps.save = lambda: hits.append("lamps")
         ev = types.SimpleNamespace(widget=FW())
-        for page in (0, 1, 3, 4):
+        for page in (0, 1, 2):
             a.show_page(page)
             self.assertEqual(self.root._b["<Control-s>"](ev), "break")
-        self.assertEqual(hits, ["stickers", "models", "wheels", "lamps"])               # before: wheels / lamps / ... saved the MODELS tab
-        a.show_page(6)                                                                  # engine page has no save: nothing happens, no error
+        a.show_module("lamps")                                                          # Lamps is a module of the Models page
+        self.assertEqual(self.root._b["<Control-s>"](ev), "break")
+        a.show_module("parts")
+        self.assertEqual(hits, ["stickers", "models", "wheels", "models"])              # Lamps edits the car open in Parts: Ctrl+S saves that car; before: wheels / lamps / ... saved the MODELS tab
+        a.show_page(4)                                                                  # engine page has no save: nothing happens, no error
         self.root._b["<Control-s>"](ev)
         self.assertEqual(len(hits), 4)
 
@@ -211,6 +225,7 @@ class App(unittest.TestCase):
         a.models.do_undo = lambda: hits.append("undo")
         a.models.delete = lambda: hits.append("delete")
         a.models.pack = object()                                                         # something is open
+        a.models.render = lambda *a_, **k_: None
         tree, entry = FW(), FW(); tree.klass, entry.klass = "Treeview", "TEntry"
         a.show_page(0)
         self.assertIsNone(self.root._b["<Control-z>"](types.SimpleNamespace(widget=tree)))
@@ -219,8 +234,11 @@ class App(unittest.TestCase):
         self.assertEqual(self.root._b["<Delete>"](types.SimpleNamespace(widget=tree)), "break")
         self.assertIsNone(self.root._b["<Delete>"](types.SimpleNamespace(widget=entry)))        # Delete edits the text box
         self.assertIsNone(self.root._b["<Control-z>"](types.SimpleNamespace(widget=entry)))
-        a.show_page(3)
+        a.show_page(2)
         self.assertIsNone(self.root._b["<Delete>"](types.SimpleNamespace(widget=tree)))         # not the Models page
+        a.show_module("backfire")                                                               # nor while Backfire / Lamps is in front
+        self.assertIsNone(self.root._b["<Delete>"](types.SimpleNamespace(widget=tree)))
+        a.show_module("parts")
         self.assertEqual(hits, ["undo", "delete"])
 
     def test_07_menu_command_with_nothing_open_explains_itself(self):
@@ -231,10 +249,10 @@ class App(unittest.TestCase):
         self.assertEqual(a.current_page, 1)                                              # it brought the Models page forward
 
     def test_08_page_keys_and_shortcut_window(self):
-        for i in range(7):
+        for i in range(5):
             self.root._b["<Control-Key-%d>" % (i + 1)](types.SimpleNamespace(widget=FW()))
             self.assertEqual(self.app.current_page, i)
-        self.assertNotIn("<Control-Key-8>", self.root._b)                                # only as many keys as pages
+        self.assertNotIn("<Control-Key-6>", self.root._b)                                # only as many keys as pages
         self.assertEqual(self.root._b["<F1>"](types.SimpleNamespace(widget=FW())), "break")
 
     def test_09_window_geometry_is_remembered(self):
@@ -286,7 +304,7 @@ class App(unittest.TestCase):
     def test_12_confirmations_share_one_wording(self):
         a = self.app
         m = a.models
-        for tab, what in ((m, "this car"), (a.lamps, "this car"), (a.meters, "this file")):
+        for tab, what in ((m, "this car"), (a.meters, "this file")):
             tab.dirty = False
             MB.clear()
             self.assertTrue(tab.confirm_discard()); self.assertEqual(MB, [])

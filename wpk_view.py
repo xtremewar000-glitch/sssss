@@ -27,7 +27,7 @@ VERTEX_LIT = np.dtype([("pos", "<f4", 3), ("uv", "<f4", 2), ("rgba", "u1", 4),
                        ("normal", "<i2", 3), ("pad", "<i2")])
 VIEWS = [("Front 3/4", -35, 14), ("Side", 90, 0), ("Rear 3/4", 145, 16), ("Rear", 180, 0), ("Front", 0, 0),
          ("Top", 0, 89)]
-BG = np.array([0.55, 0.62, 0.70], np.float32)
+BG = np.array([0.10, 0.14, 0.20], np.float32)  # deep slate preview stage to match the dark editor
 FREE = len(VIEWS)                     # index of the free-turn view (after the six fixed ones)
 
 # The car pack holds every optional part at once, each variant as its own chunk tagged with a part number.
@@ -546,7 +546,7 @@ LIGHTS = ("Flat", "Soft", "Shadow")
 _SUN = np.array([-0.45, 0.65, 0.62]) / np.linalg.norm([-0.45, 0.65, 0.62])
 
 
-BG_NIGHT = np.array([0.08, 0.11, 0.19], np.float32)                           # moonlit blue-grey (was near-black)
+BG_NIGHT = np.array([0.04, 0.06, 0.10], np.float32)                           # deeper blue-black preview stage
 _MOON = np.array([0.5, 0.55, 0.67]) / np.linalg.norm([0.5, 0.55, 0.67])      # a cool light from the upper right
 _NIGHT_TINT = np.array([0.80, 0.90, 1.15], np.float32)
 NIGHT_ENV = 0.60                                                              # the daylight environment map, dimmed
@@ -1218,7 +1218,7 @@ class PreviewWindow:
 
         # ---- the picture
         self.canvas = tk.Canvas(fr, width=self.W, height=self.H, highlightthickness=1, highlightbackground="#999",
-                                background="#8c9eb3")
+                                background="#1a2635")
         self.canvas.grid(row=1, column=0, sticky="nsew", pady=8)
         self.canvas.bind("<Configure>", self.canvas_resized)
         self.canvas.bind("<Double-Button-1>", lambda _e: self.toggle_max())

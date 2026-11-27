@@ -43,6 +43,7 @@ import re
 import struct
 import sys
 import threading
+import time
 import zlib
 from collections import defaultdict
 
@@ -85,10 +86,11 @@ try:
     import backfire_edit               # the 3rd tab: the exhaust flame (backfire.wpk + backfire.bfx)
 except ImportError:
     backfire_edit = None
+import vpk_layout                      # Blender-style panels (folding sections, up / down scrolling column)
 import vpk_ui                          # shared look, confirmations, keyboard shortcuts, saved layout (Milestone 6)
 
 APP = "VPK tool"
-VERSION = "2.4"
+VERSION = "2.6"
 SIZE = 512                       # the stock sticker size (VPK1: every picture)
 SIZES = (512, 1024, 2048)        # what the tool makes a picture at
 DEFAULT_SIZE = 512               # new pictures (Edit > Size of new stickers)
@@ -875,7 +877,7 @@ def run_gui(_hook=None, start=None):
 
     from PIL import ImageTk
 
-    ACCENT, ORANGE, GREY = "#1f6feb", "#e8710a", "#777777"
+    ACCENT, ORANGE, GREY = vpk_ui.ACCENT, vpk_ui.WARNING, vpk_ui.MUTED
     TMIN, TMAX, PAD = 66, 100, 10
 
     def checker(size, cell=8):
@@ -887,7 +889,7 @@ def run_gui(_hook=None, start=None):
         def __init__(self, root):
             self.root = root
             root.title(APP + "  " + VERSION)
-            root.minsize(980, 620)
+            root.minsize(1060, 640)
             root.geometry("%dx%d" % (min(1360, root.winfo_screenwidth() - 40), min(860, root.winfo_screenheight() - 90)))
             try:                                           # the size, place and maximised state it had last time
                 saved = (wpk_view.load_prefs() if wpk_view else {}).get("main", {})
@@ -939,8 +941,11 @@ def run_gui(_hook=None, start=None):
             self.maximize_later = getattr(self, "maximize_later", False)
             self.build_ui()
             self.refresh_all()
+            self.setup_ui_scale()
             root.protocol("WM_DELETE_WINDOW", self.quit)
             self.install_keys()
+            if self.pages and len(self.pages) > 1:
+                self.show_module("parts")                  # starts on Vehicle Models > Parts & viewport
             if self.maximize_later:
                 vpk_ui.set_maximised(root, True, tk.TclError)
             for key, d in (("Left", (-1, 0)), ("Right", (1, 0)), ("Up", (0, -1)), ("Down", (0, 1))):
@@ -1008,6 +1013,13 @@ def run_gui(_hook=None, start=None):
                 m.add_cascade(label="Models", menu=mm)
                 self.go_menu = tk.Menu(m, tearoff=0, **menu_style)      # filled once the pages exist
                 m.add_cascade(label="Go", menu=self.go_menu)
+            self.ui_var = tk.StringVar(value="auto")
+            sm = tk.Menu(m, tearoff=0, **menu_style)
+            sm.add_radiobutton(label="Fit to the window (automatic)", variable=self.ui_var, value="auto", command=self.ui_scale_chosen)
+            sm.add_separator()
+            for sc in vpk_ui.MANUAL_SCALES:
+                sm.add_radiobutton(label="%d %%" % round(sc * 100), variable=self.ui_var, value=str(sc), command=self.ui_scale_chosen)
+            m.add_cascade(label="Size", menu=sm)
             hm = tk.Menu(m, tearoff=0, **menu_style)
             hm.add_command(command=self.show_shortcuts, **vpk_ui.menu_label("shortcuts", "Keyboard shortcuts"))
             hm.add_command(label="How it works", command=self.show_help)
@@ -1015,26 +1027,15 @@ def run_gui(_hook=None, start=None):
             r.configure(menu=m)
 
             if wpk_edit:
-                # Navigation rail + stacked pages. Each page still uses its original editor.
-                header = ttk.Frame(r, padding=(20, 13))
-                header.pack(fill="x")
-                tk.Label(header, text="V", bg="#205b89", fg="#ffffff",
-                         font=("TkDefaultFont", 15, "bold"), width=2, pady=4).pack(side="left")
-                brand = ttk.Frame(header)
-                brand.pack(side="left", padx=(10, 0))
-                tk.Label(brand, text="VPK TOOL", bg="#0c1017", fg="#e6edf6",
-                         font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
-                tk.Label(brand, text="RE3DX+ MODDING WORKSPACE", bg="#0c1017", fg="#8293a8",
-                         font=("TkDefaultFont", 8)).pack(anchor="w", pady=(2, 0))
-                tk.Label(header, text="WORKSPACE  /  LOCAL PROJECT", bg="#0c1017", fg="#8293a8",
-                         font=("TkDefaultFont", 8, "bold")).pack(side="right", padx=8)
-                ttk.Separator(r).pack(fill="x")
-
-                shell = ttk.Frame(r)
+                # Compact application chrome: the OS title bar and File/Edit/View/Help menu
+                # already identify the app, so omit the tall branding banner and give the
+                # editor workspaces the full window height.  Each page keeps its own editor.
+                shell = ttk.Frame(r, style="VPK.Page.TFrame")
                 shell.pack(fill="both", expand=True)
                 shell.columnconfigure(1, weight=1)
                 shell.rowconfigure(0, weight=1)
-                rail = tk.Frame(shell, bg="#0f151f", width=194, highlightthickness=0)
+                rail = tk.Frame(shell, bg="#0f151f", width=212, highlightthickness=0,
+                            highlightbackground="#26364a", highlightcolor="#26364a", bd=0)
                 rail.grid(row=0, column=0, sticky="ns")
                 rail.grid_propagate(False)
                 tk.Label(rail, text="WORKSPACE", bg="#0f151f", fg="#71839a",
@@ -1066,12 +1067,9 @@ def run_gui(_hook=None, start=None):
 
                 tab1 = add_page("Livery & Stickers", "◈", "Design")
                 tab2 = add_page("Vehicle Models", "▰", "Vehicle")
-                if backfire_edit:
-                    tab3 = add_page("Backfire", "≋", "Audio")
+                # Backfire and Lamps are modules inside the Vehicle Models page (a strip of buttons above it), not pages of their own
                 if wheels_tab:
                     tab4 = add_page("Wheels", "◉", "Components")
-                if lamp_edit:
-                    tab6 = add_page("Lamps", "✦")
                 if meters_edit:
                     tab7 = add_page("Meters", "▥")
                 if engine_tab:
@@ -1079,35 +1077,56 @@ def run_gui(_hook=None, start=None):
                 tk.Label(rail, text="VPK TOOL  ·  %s" % VERSION, bg="#0f151f", fg="#53647a",
                          font=("TkDefaultFont", 7)).pack(side="bottom", anchor="w", padx=16, pady=15)
 
-                _scroll = backfire_edit.scrollable if backfire_edit else (lambda f: f)
-                self.models = wpk_edit.build_tab(_scroll(tab2), r, self)
+                # ---- the Vehicle Models page: a strip of modules (Parts & viewport | Backfire | Lamps) over a stack of their pages
+                self.module, self.mod_frames, self.mod_objs = "parts", {}, {}
+                self.mod_var = tk.StringVar(value="parts")
+                strip = ttk.Frame(tab2, padding=(12, 8, 12, 0))
+                strip.pack(fill="x")
+                ttk.Label(strip, text="MODULE", foreground="#8f9eb2", font=("TkDefaultFont", 8, "bold")).pack(side="left", padx=(0, 8))
+                self.mod_frames["parts"] = tab2                  # one page, one viewport: the modules only swap panels inside it
+                for key, label, mod in (("parts", "Parts & viewport", True), ("backfire", "Backfire flames", backfire_edit),
+                                        ("lamps", "Lamps", lamp_edit)):
+                    if mod:
+                        ttk.Radiobutton(strip, text=label, value=key, variable=self.mod_var, style="Toolbutton",
+                                        command=lambda k=key: self.show_module(k)).pack(side="left", padx=2)
+                        self.mod_frames.setdefault(key, None)
+                outer = ttk.Frame(tab2)
+                outer.pack(fill="both", expand=True)
+                holder = backfire_edit.scrollable(outer, horizontal=False) if backfire_edit else outer   # the page scrolls up / down: the viewport keeps its own size
+                self.models = wpk_edit.build_tab(holder, r, self)
+                self.mod_objs["parts"] = self.models
                 if backfire_edit:
-                    self.backfire = backfire_edit.build_tab(tab3, r, self)
+                    self.backfire = backfire_edit.build_tab(holder, r, self, host=self.models)
+                    self.mod_objs["backfire"] = self.backfire
+                if lamp_edit:
+                    self.lamps = lamp_edit.build_tab(holder, r, self, host=self.models)
+                    self.mod_objs["lamps"] = self.lamps
                 if wheels_tab:
                     self.wheels = wheels_tab.build_tab(tab4, r, self)
-                if lamp_edit:
-                    self.lamps = lamp_edit.build_tab(tab6, r, self)
                 if meters_edit:
                     self.meters = meters_edit.build_tab(tab7, r, self)
                 if engine_tab:
                     self.engine = engine_tab.build_tab(tab5, r, self)
                 self.page_objs = [self, self.models] + [getattr(self, n) for n, mod in (
-                    ("backfire", backfire_edit), ("wheels", wheels_tab), ("lamps", lamp_edit), ("meters", meters_edit),
-                    ("engine", engine_tab)) if mod]
+                    ("wheels", wheels_tab), ("meters", meters_edit), ("engine", engine_tab)) if mod]
                 for i, name in enumerate(self.page_names[:9]):
                     self.go_menu.add_command(label=name, accelerator="Ctrl+%d" % (i + 1), command=lambda i=i: self.show_page(i))
+                self.go_menu.add_separator()
+                for key, label in (("backfire", "Vehicle Models  >  Backfire flames"), ("lamps", "Vehicle Models  >  Lamps")):
+                    if key in self.mod_frames:
+                        self.go_menu.add_command(label=label, command=lambda k=key: self.show_module(k))
                 r = tab1                                   # everything below is the sticker page
 
             top = ttk.Frame(r, padding=(12, 10, 12, 4))
             top.pack(fill="x")
-            ttk.Button(top, text="Open car .vpk…", command=self.open_dialog).pack(side="left")
+            ttk.Button(top, text="Open car .vpk…", command=self.open_dialog, style="VPK.Primary.TButton").pack(side="left")
             ttk.Label(top, text="  Car:").pack(side="left")
             self.car_combo = ttk.Combobox(top, textvariable=self.carvar, state="disabled", width=22)
             self.car_combo.pack(side="left", padx=(4, 0))
             self.car_combo.bind("<<ComboboxSelected>>", lambda _e: self.switch_car())
             self.steps = []
-            sf = ttk.Frame(top)
-            sf.pack(side="right")
+            sf = ttk.Frame(r, padding=(14, 0, 12, 2))               # the four steps get their own line so the toolbar never overflows
+            sf.pack(fill="x")
             for i, t in enumerate(("1  Open a car file", "2  Click a sticker", "3  Replace image", "4  Save to game")):
                 if i:
                     ttk.Label(sf, text="›", foreground=GREY).pack(side="left", padx=4)
@@ -1115,15 +1134,21 @@ def run_gui(_hook=None, start=None):
                 lab.pack(side="left")
                 self.steps.append(lab)
 
-            ttk.Separator(r).pack(fill="x", pady=(6, 0))
-            body = ttk.Frame(r)
+            # save bar first so it always stays visible at the bottom of the page
+            bar = ttk.Frame(r, padding=(12, 8), style="VPK.Footer.TFrame")
+            bar.pack(fill="x", side="bottom")
+            self.status.bar(bar, ttk, tk, wraplength=700, side="left", fill="x", expand=True)
+            self.btn_save = ttk.Button(bar, text="Save to game", command=self.save, state="disabled", style="VPK.Primary.TButton")
+            self.btn_save.pack(side="right")
+            self.btn_saveas = ttk.Button(bar, text="Save as…", command=self.save_as, state="disabled")
+            self.btn_saveas.pack(side="right", padx=(0, 8))
+            ttk.Separator(r).pack(fill="x", side="bottom")
+            ttk.Separator(r).pack(fill="x", pady=(2, 0))
+            # Blender-style: the sticker grid on the left, folding panels on the right, a divider you can drag between them
+            body = ttk.PanedWindow(r, orient="horizontal")
             body.pack(fill="both", expand=True)
-            body.columnconfigure(0, weight=1)
-            body.rowconfigure(0, weight=1)
-
             gf = ttk.Frame(body)
-            gf.grid(row=0, column=0, sticky="nsew")
-            self.canvas = tk.Canvas(gf, highlightthickness=0, background="#f4f4f4")
+            self.canvas = tk.Canvas(gf, highlightthickness=0, background="#101925")
             sb = ttk.Scrollbar(gf, orient="vertical", command=self.canvas.yview)
             self.canvas.configure(yscrollcommand=sb.set)
             sb.pack(side="right", fill="y")
@@ -1131,39 +1156,25 @@ def run_gui(_hook=None, start=None):
             self.canvas.bind("<Configure>", self.on_resize)
             for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
                 self.canvas.bind(seq, self.wheel)
+            self.pscroll = vpk_layout.VScroll(body)                  # up / down only, no sideways bar
+            body.add(gf, weight=1)
+            body.add(self.pscroll.outer, weight=0)
+            self._livery_paned, self._livery_placed = body, False
 
-            ttk.Separator(body, orient="vertical").grid(row=0, column=1, sticky="ns")
-            pcol = ttk.Frame(body, width=360)                      # right side: scrolls when the window is short
-            pcol.grid(row=0, column=2, sticky="ns")
-            pcol.pack_propagate(False)
-            self.pcv = tk.Canvas(pcol, highlightthickness=0, width=345)
-            psb = ttk.Scrollbar(pcol, orient="vertical", command=self.pcv.yview)
-            self.pcv.configure(yscrollcommand=psb.set)
-            psb.pack(side="right", fill="y")
-            self.pcv.pack(side="left", fill="both", expand=True)
-            self.panel = ttk.Frame(self.pcv, padding=12)
-            pwin = self.pcv.create_window(0, 0, anchor="nw", window=self.panel)
-            self.panel.bind("<Configure>", lambda _e: self.pcv.configure(scrollregion=self.pcv.bbox("all")))
-            self.pcv.bind("<Configure>", lambda e: self.pcv.itemconfigure(pwin, width=e.width))
-
-            def panel_wheel(e):
-                w = self.root.winfo_containing(e.x_root, e.y_root)
-                if w is None or not str(w).startswith(str(pcol)):
+            def place_divider(_e=None):
+                w = body.winfo_width()
+                if self._livery_placed or w < 500:
                     return
-                if self.pcv.bbox("all") and self.pcv.bbox("all")[3] > self.pcv.winfo_height():
-                    self.pcv.yview_scroll(-3 if (e.num == 4 or getattr(e, "delta", 0) > 0) else 3, "units")
-            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-                self.root.bind_all(seq, panel_wheel, add="+")
+                self._livery_placed = True
+                try:
+                    body.sashpos(0, max(260, w - 380))
+                except tk.TclError:
+                    self._livery_placed = False
+            body.bind("<Configure>", place_divider)
+            self.panel = ttk.Frame(self.pscroll.body, padding=12)
+            self.panel.pack(fill="x")
             self.build_panel()
 
-            ttk.Separator(r).pack(fill="x")
-            bar = ttk.Frame(r, padding=(12, 8))
-            bar.pack(fill="x")
-            self.status.bar(bar, ttk, tk, side="left", fill="x", expand=True)
-            self.btn_save = ttk.Button(bar, text="Save to game", command=self.save, state="disabled")
-            self.btn_save.pack(side="right")
-            self.btn_saveas = ttk.Button(bar, text="Save as…", command=self.save_as, state="disabled")
-            self.btn_saveas.pack(side="right", padx=(0, 8))
 
         def build_panel(self):
             p = self.panel
@@ -1174,7 +1185,8 @@ def run_gui(_hook=None, start=None):
             self.sub.grid(row=1, column=0, sticky="w", pady=(0, 8))
             pf = ttk.Frame(p)
             pf.grid(row=2, column=0)
-            self.prev = tk.Canvas(pf, width=256, height=256, highlightthickness=1, highlightbackground="#999")
+            self.prev = tk.Canvas(pf, width=256, height=256, highlightthickness=1,
+                                  highlightbackground=vpk_ui.BORDER, background=vpk_ui.PANEL)
             self.prev.pack()
             self.prev.bind("<Double-Button-1>", lambda _e: self.open_big())
             uvrow = ttk.Frame(pf)
@@ -1212,9 +1224,11 @@ def run_gui(_hook=None, start=None):
             self.chk_all.grid(row=2, column=0, columnspan=2, sticky="w")
             ok_car = "normal" if wpk_view else "disabled"
 
+            gbox = ttk.Frame(p)
+            gbox.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+
             def group(row, title):
-                f = ttk.LabelFrame(p, text=title, padding=(8, 2, 8, 8))
-                f.grid(row=row, column=0, sticky="ew", pady=(10, 0))
+                f = vpk_layout.Section(gbox, title).body
                 f.columnconfigure(0, weight=1)
                 f.columnconfigure(1, weight=1)
                 return f
@@ -1241,7 +1255,7 @@ def run_gui(_hook=None, start=None):
             self.btn_uvall = button(g4, 0, "Export UV of ALL cars…", self.export_all_uv, ok_car)
             self.btn_texall = button(g4, 1, "Export textures of ALL cars…", self.export_all_textures, ok_car)
             self.hint = ttk.Label(p, text="", foreground=GREY, wraplength=310, justify="left")
-            self.hint.grid(row=9, column=0, sticky="w", pady=(10, 0))
+            self.hint.grid(row=6, column=0, sticky="w", pady=(10, 0))
 
         # ------------------------------------------------------------ opening / saving
         def ask_discard(self):
@@ -1332,14 +1346,114 @@ def run_gui(_hook=None, start=None):
                             + ("  ·  old file kept as .bak" if st["bak"] else "")))
             return True
 
+        # ------------------------------------------------------------ UI size
+        def setup_ui_scale(self):
+            """fonts follow the window: "Fit to the window" (the default) takes the biggest size at which the pages need no sideways scrolling;
+            Size menu = a fixed percentage.  Remembered between runs."""
+            self.uiscale = vpk_ui.UIScale(tkfont, self.root)
+            self._fit_job, self._fitting = None, False
+            self._fit_size = None                      # the window's size when the last fit finished
+            self._fit_times, self._fit_hold = [], 0.0  # when the last fits ran; auto-fit is paused until _fit_hold (a loop breaker)
+            saved = (wpk_view.load_prefs() if wpk_view else {}).get("ui_scale", "auto")
+            try:
+                self.ui_mode = "auto" if saved == "auto" else float(saved)
+            except (TypeError, ValueError):
+                self.ui_mode = "auto"
+            if self.ui_mode != "auto" and not 0.5 <= self.ui_mode <= 2.0:
+                self.ui_mode = "auto"
+            self.ui_var.set("auto" if self.ui_mode == "auto" else str(self.ui_mode))
+            if self.ui_mode != "auto":
+                self.uiscale.apply(self.ui_mode)
+            self.root.bind("<Configure>", self.fit_soon, add="+")
+            self.fit_soon()
+
+        def fit_soon(self, e=None):
+            """re-fit a moment after the window (or the page in front) stopped changing"""
+            if e is not None:
+                if e.widget is not self.root:
+                    return
+                # A <Configure> that does not change the size is no resize: some systems send one whenever the fonts (so the layout)
+                # change, and answering it with another fit makes the UI scale up and down for ever.
+                if (e.width, e.height) == getattr(self, "_fit_size", None):
+                    return
+            if getattr(self, "ui_mode", None) != "auto" or getattr(self, "_fitting", False):
+                return
+            if time.time() < getattr(self, "_fit_hold", 0.0):
+                return
+            if self._fit_job:
+                self.root.after_cancel(self._fit_job)
+            self._fit_job = self.root.after(350, self.fit_now)
+
+        def fit_now(self):
+            self._fit_job = None
+            if self.ui_mode != "auto" or self._fitting:
+                return
+            now = time.time()
+            self._fit_times = [t for t in self._fit_times if now - t < 6.0]
+            if len(self._fit_times) >= 4:              # four fits in six seconds: something keeps changing the layout. Stop, keep the size.
+                self._fit_hold, self._fit_times = now + 30.0, []
+                try:
+                    self.status.set("Automatic UI size paused: the window kept changing. Pick a size in the Size menu, or resize the window to fit again.")
+                except Exception:
+                    pass
+                return
+            self._fit_times.append(now)
+            self._fitting = True
+            gl = sys.modules.get("gl_viewport")
+            if gl is not None:
+                gl.pause()                             # no 3D redraws while the sizes are being measured
+            try:
+                def over(step):
+                    self.uiscale.apply(step)
+                    self.root.update_idletasks()
+                    return vpk_ui.worst_overflow()
+                before = self.uiscale.current
+                best = vpk_ui.pick_scale(vpk_ui.SCALE_STEPS, over)
+                self.uiscale.apply(best if best is not None else before)
+                self.root.update_idletasks()
+            except tk.TclError:
+                pass
+            finally:
+                self._fitting = False
+                try:
+                    self._fit_size = (self.root.winfo_width(), self.root.winfo_height())
+                except tk.TclError:
+                    pass
+                if gl is not None:
+                    gl.resume()
+
+        def ui_scale_chosen(self):
+            v = self.ui_var.get()
+            self.ui_mode = "auto" if v == "auto" else float(v)
+            try:
+                if wpk_view:
+                    wpk_view.save_prefs(ui_scale=v)
+            except Exception:
+                pass
+            if self.ui_mode == "auto":
+                self.fit_now()
+            else:
+                self.uiscale.apply(self.ui_mode)
+
         def show_page(self, index):
             """Raise a workspace page and update the active navigation item."""
             if not self.pages or not (0 <= index < len(self.pages)):
                 return
             self.current_page = index
             self.pages[index].tkraise()
+            self.fit_soon()
             for i, button in enumerate(self.nav_buttons):
                 button.configure(style="VPK.NavActive.TButton" if i == index else "VPK.Nav.TButton")
+
+        def show_module(self, key):
+            """open a module of the Vehicle Models page (parts / backfire / lamps)"""
+            if key not in getattr(self, "mod_frames", {}):
+                return
+            self.module = key
+            self.mod_var.set(key)
+            self.show_page(1)
+            if self.models is not None:
+                self.models.activate(key)                 # the page's panels change; the viewport stays
 
         def on_stickers(self):
             """True while the sticker tab is the one in front (the keyboard shortcuts belong to it then)"""
@@ -1349,13 +1463,17 @@ def run_gui(_hook=None, start=None):
         def current_scope(self):
             if not self.pages or self.current_page == 0:
                 return "stickers"
-            return "models" if self.current_page == 1 else "other"
+            if self.current_page == 1:
+                return "other" if getattr(self, "module", "parts") == "backfire" else "models"      # Backfire has its own buttons; Lamps edits the open car
+            return "other"
 
         def page_tab(self):
             """the object of the page in front (the sticker page is the App itself)"""
             if not self.pages:
                 return self
             try:
+                if self.current_page == 1 and getattr(self, "module", "parts") == "backfire":
+                    return self.mod_objs.get(self.module)            # Ctrl+O / Ctrl+S act on the module in front
                 return self.page_objs[self.current_page]
             except IndexError:
                 return None
@@ -1507,7 +1625,7 @@ def run_gui(_hook=None, start=None):
             pending = []
             W = max(c.winfo_width(), 200)
             if not self.pack:
-                c.create_text(W // 2, 120, justify="center", fill="#444", font=self.big,
+                c.create_text(W // 2, 120, justify="center", fill=vpk_ui.TEXT, font=self.big,
                               text="Open a car's .vpk to begin")
                 c.create_text(W // 2, 200, justify="center", fill=GREY, width=min(W - 40, 520),
                               text="Click  Open car .vpk…  and pick a file such as maz_FD3S.vpk from the game's\n"
@@ -1535,7 +1653,7 @@ def run_gui(_hook=None, start=None):
             y = PAD
             for name, ns in groups:
                 lo, hi = ns[0], ns[-1]
-                c.create_text(PAD, y, anchor="nw", font=self.bold, fill="#222",
+                c.create_text(PAD, y, anchor="nw", font=self.bold, fill=vpk_ui.TEXT,
                               text="%s   (#%d)" % (name, lo) if lo == hi else "%s   (#%d – %d)" % (name, lo, hi))
                 y += 24
                 for k, n in enumerate(ns):
@@ -2591,7 +2709,7 @@ def run_gui(_hook=None, start=None):
                 cur = 3
             for i, lab in enumerate(self.steps):
                 lab.configure(font=self.bold if i == cur else "TkDefaultFont",
-                              foreground=ACCENT if i == cur else ("#222" if i < cur else GREY))
+                              foreground=ACCENT if i == cur else (vpk_ui.SUCCESS if i < cur else vpk_ui.MUTED))
 
         def refresh_all(self):
             self.draw_grid()

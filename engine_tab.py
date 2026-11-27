@@ -23,6 +23,7 @@ import numpy as np
 
 import engine_data as D
 import vpk_ui
+import vpk_layout as VL                   # Blender-style list | viewport | panels layout
 
 try:
     import wpk_view
@@ -289,7 +290,7 @@ def build_tab(tab_parent, root, app=None):
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
-    parent = backfire_edit.scrollable(tab_parent) if backfire_edit else tab_parent
+    parent = tab_parent                     # no page scrolling: the panels scroll themselves (vpk_layout)
     prefs = wpk_view.load_prefs() if wpk_view else {}
     share = sharing()
 
@@ -309,6 +310,7 @@ def build_tab(tab_parent, root, app=None):
 
         # ---- layout
         def build(self):
+            # Blender-style: toolbar on top, status at the bottom, between them list | the loops | options (vpk_layout)
             top = ttk.Frame(parent, padding=(12, 10, 12, 4))
             top.pack(fill="x")
             ttk.Button(top, text="Choose sound/engine folder…", command=self.pick_dir).pack(side="left")
@@ -316,50 +318,54 @@ def build_tab(tab_parent, root, app=None):
             self.dirlabel.pack(side="left", padx=8)
             ttk.Label(parent, text="Each car plays 4 engine loops + 4 exhaust loops that fade into each other as the revs climb "
                       "(it is by rpm, not by gear).  Pick a sound set, then replace its loops or copy another car's sound.",
-                      wraplength=900, justify="left", foreground="#8f9eb2").pack(fill="x", padx=12)
-            body = ttk.Frame(parent, padding=12)
-            body.pack(fill="both", expand=True)
-            left = ttk.Frame(body)
-            left.pack(side="left", fill="y")
+                      wraplength=900, justify="left", foreground="#8f9eb2").pack(fill="x", padx=12, pady=(0, 4))
+            self.status.bar(parent, ttk, tk, wraplength=900, fill="x", side="bottom", padx=12, pady=4)
+            ttk.Separator(parent).pack(fill="x", side="bottom")
+            ws = self.ws = VL.Workspace(parent, left_w=290, right_w=380)
+            left = ws.left
             ttk.Label(left, text="Find a car:").pack(anchor="w")
-            e = ttk.Entry(left, textvariable=self.filter, width=34)
-            e.pack(anchor="w")
+            e = ttk.Entry(left, textvariable=self.filter, width=30)
+            e.pack(fill="x")
             self.filter.trace_add("write", lambda *_: self.fill_list())
             lf = ttk.Frame(left)
-            lf.pack(fill="y", expand=True, pady=(6, 0))
-            self.lb = tk.Listbox(lf, width=34, height=22, exportselection=False)
+            lf.pack(fill="both", expand=True, pady=(6, 0))
+            self.lb = tk.Listbox(lf, width=30, height=22, exportselection=False)
             sb = ttk.Scrollbar(lf, orient="vertical", command=self.lb.yview)
             self.lb.configure(yscrollcommand=sb.set)
-            self.lb.pack(side="left", fill="y", expand=True)
+            self.lb.pack(side="left", fill="both", expand=True)
             sb.pack(side="left", fill="y")
             self.lb.bind("<<ListboxSelect>>", lambda _e: self.pick_set())
-            right = ttk.Frame(body)
-            right.pack(side="left", fill="both", expand=True, padx=(14, 0))
-            self.used = ttk.Label(right, text="", wraplength=560, justify="left")
+            main = ws.center
+            self.used = ttk.Label(main, text="", wraplength=440, justify="left")
             self.used.pack(anchor="w")
-            self.grid = ttk.Frame(right)
+            self.grid = ttk.Frame(main)
             self.grid.pack(anchor="w", pady=(8, 0), fill="x")
-            opt = ttk.Frame(right)
-            opt.pack(anchor="w", pady=(8, 0))
+            self.warn = ttk.Label(main, text="", wraplength=440, justify="left", foreground="#f85149")
+            self.warn.pack(anchor="w", pady=(8, 0))
+
+            opt_sec = ws.section("Loops").body
+            opt = ttk.Frame(opt_sec)
+            opt.pack(fill="x")
             ttk.Checkbutton(opt, text="Make it loop smoothly, cross-fade", variable=self.loop).pack(side="left")
             ttk.Entry(opt, textvariable=self.fade, width=4).pack(side="left", padx=4)
-            ttk.Label(opt, text="ms     ").pack(side="left")
-            ttk.Checkbutton(opt, text="Match the stock loudness", variable=self.match).pack(side="left")
-            cp = ttk.Frame(right)
-            cp.pack(anchor="w", pady=(10, 0))
-            ttk.Label(cp, text="Give this set the sound of:").pack(side="left")
+            ttk.Label(opt, text="ms").pack(side="left")
+            ws.flow(opt)
+            op2 = ttk.Frame(opt_sec)
+            op2.pack(fill="x", pady=(4, 0))
+            ttk.Checkbutton(op2, text="Match the stock loudness", variable=self.match).pack(side="left")
+            cp_sec = ws.section("Copy a sound").body
+            ttk.Label(cp_sec, text="Give this set the sound of:").pack(anchor="w")
             self.srcvar = tk.StringVar()
-            self.src = ttk.Combobox(cp, textvariable=self.srcvar, state="readonly", width=30,
+            self.src = ttk.Combobox(cp_sec, textvariable=self.srcvar, state="readonly", width=30,
                                     values=[set_title(i) for i in range(len(D.SETS))])
-            self.src.pack(side="left", padx=6)
-            ttk.Button(cp, text="Copy", command=self.copy_from).pack(side="left")
-            bt = ttk.Frame(right)
-            bt.pack(anchor="w", pady=(10, 0))
+            self.src.pack(fill="x", pady=4)
+            ttk.Button(cp_sec, text="Copy", command=self.copy_from).pack(anchor="w")
+            bt_sec = ws.section("Restore").body
+            bt = ttk.Frame(bt_sec)
+            bt.pack(fill="x")
             ttk.Button(bt, text="Restore this set", command=lambda: self.do_restore(True)).pack(side="left")
             ttk.Button(bt, text="Restore ALL sounds", command=lambda: self.do_restore(False)).pack(side="left", padx=8)
-            self.warn = ttk.Label(right, text="", wraplength=560, justify="left", foreground="#f85149")
-            self.warn.pack(anchor="w", pady=(8, 0))
-            self.status.bar(parent, ttk, tk, fill="x", side="bottom", padx=12, pady=4)
+            ws.flow(bt)
             self.fill_list()
 
         # ---- list
@@ -423,19 +429,21 @@ def build_tab(tab_parent, root, app=None):
             shared = set()
             for i, n in enumerate(names):
                 bands = D.SETS[k][2] if i < 4 else D.SETS[k][3]
-                ttk.Label(self.grid, text=SLOT_LABEL[i]).grid(row=i, column=0, sticky="w")
-                ttk.Label(self.grid, text=n + ".wav", font=("TkFixedFont", 9)).grid(row=i, column=1, sticky="w", padx=8)
-                ttk.Label(self.grid, text=band_text(bands[i % 4]).replace(" rpm (fades", " (fades"), foreground="#8f9eb2", font=("TkDefaultFont", 8)).grid(row=i, column=2, sticky="w", padx=4)
+                r = 2 * i
+                ttk.Label(self.grid, text=SLOT_LABEL[i]).grid(row=r, column=0, sticky="w")
+                ttk.Label(self.grid, text=n + ".wav", font=("TkFixedFont", 9)).grid(row=r, column=1, sticky="w", padx=8)
+                ttk.Label(self.grid, text=band_text(bands[i % 4]).replace(" rpm (fades", " (fades"), foreground="#8f9eb2", font=("TkDefaultFont", 8),
+                          wraplength=360, justify="left").grid(row=r + 1, column=0, columnspan=5, sticky="w", pady=(0, 4))
                 text = ""
                 if self.dir:
                     inf = info(os.path.join(self.dir, n + ".wav"))
                     text = "%.2fs" % inf[1] if inf else "missing!"
                     if is_changed(self.dir, n):
                         text += " ●"
-                ttk.Label(self.grid, text=text, foreground="#e8710a").grid(row=i, column=3, sticky="w", padx=4)
+                ttk.Label(self.grid, text=text, foreground="#e8710a").grid(row=r, column=2, sticky="w", padx=4)
                 state = "normal" if self.dir else "disabled"
-                ttk.Button(self.grid, text="Play", width=5, state=state, command=lambda n=n: self.play(n)).grid(row=i, column=4, padx=2)
-                ttk.Button(self.grid, text="Replace…", state=state, command=lambda i=i: self.replace(i)).grid(row=i, column=5, padx=2)
+                ttk.Button(self.grid, text="Play", width=5, state=state, command=lambda n=n: self.play(n)).grid(row=r, column=3, padx=2)
+                ttk.Button(self.grid, text="Replace…", state=state, command=lambda i=i: self.replace(i)).grid(row=r, column=4, padx=2)
                 for o in share[n]:
                     if o != k:
                         shared.add(o)

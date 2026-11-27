@@ -2,6 +2,7 @@
 Checks wiring and data flow (filter, preview, warnings, replace / add / delete through Pack, undo, sync after open / kit switch).
 NOT a visual test: layout, colours and the look of the preview in real Tk are unverified."""
 import os, sys, shutil, tempfile, unittest, types
+os.environ.setdefault("VPK_VIEWPORT", "soft")      # these tests drive the software viewport (the GPU one has tests/test_gl_*.py)
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
 from test_ui_faketk import settle, MB, TMP, faketk        # installs the fake tkinter once

@@ -1,4 +1,4 @@
-VPK tool 2.4 - change the stickers (vinyls) of a Re3DX+ car
+VPK tool 2.5 - change the stickers (vinyls) of a Re3DX+ car
 ==========================================================
 
 Start:  Python 3.9+ (python.org, tick "tcl/tk").  Then double-click tools/vpk_tool/run_vpk_tool.bat  (Mac/Linux: run_vpk_tool.sh).
@@ -642,3 +642,16 @@ GPU viewport on macOS (and anywhere pyopengltk is missing)
   screenshot as on Windows; a few milliseconds slower per frame.  Pictures are drawn at the window's size in points, so on a Retina screen
   they are not 2x sharp.  If OpenGL cannot start the tool falls back to the software viewport and says why in the operation log.
   Check a Mac:  python3 gl_viewport.py info   (prints "viewport : offscreen" and the GPU).   VPK_GL_MODE=offscreen tries this path on Windows.
+
+UI size: "Fit to the window" no longer loops (v19)
+  A <Configure> that does not change the window size no longer starts another fit, fonts are not re-applied at the size they already
+  have, 3D views do not redraw while the fit measures, and if fits ever run four times in six seconds automatic fitting pauses for
+  30 s and says so in the status line (pick a size in the Size menu, or resize the window, to fit again).
+
+v20: the Lamps tab uses the GPU viewport with 360 orbit (software picture as fallback).  See UI_REDESIGN_NOTES.txt.
+v21: the Wheels tab uses the GPU viewport with 360 orbit too.
+v22: narrower layouts so the pages scroll sideways far less.
+v23: Blender-style layout (list | viewport | folding panels, draggable dividers) on Lamps, Wheels, Backfire, Meters and Engine.
+v24: Models and Livery pages: no sideways scrolling, folding side panels, draggable divider on Livery.
+v25: Backfire and Lamps are modules inside Vehicle Models (strip above the page), not separate rail pages.
+v26: Parts, Backfire and Lamps share one viewport and one car (Vehicle Models page).

@@ -302,3 +302,119 @@ OffscreenGLViewport = the same Renderer drawing into a standalone moderngl conte
 shown on a Tk canvas (PhotoImage.paste when the size is unchanged).  Same interface as GLViewport, so wpk_edit only calls
 GLV.create_viewport(...).  requirements-gpu.txt skips pyopengltk on macOS; build_mac.sh bundles moderngl / glcontext.
 Tests: tests/test_gl_offscreen.py (8, fake GL).  NOT run: real OpenGL, a real Mac, Retina sharpness, PyInstaller bundling of glcontext.
+
+v2.5 - Backfire in 3D, live play, fit to window
+-----------------------------------------------
+- Backfire page: the Vehicle Models GPU viewport and car preview (pick a car from the .bfx list; its .wpk is found in the Cars folder),
+  orbit 360 degrees (drag), pan (right-drag / Shift-drag), wheel zoom, double-click fit, Zoom to exhaust, Auto-rotate.
+- The flame plays live the way the game steps it: 60 frames a second, frames 0..16, then gone until the next pop (Play / Pause /
+  Fire once / frame scrubber / pause between pops / speed). Small / Middle and the A / B flame set follow the game.
+- Live sliders: flame Width / Length (selected or all 17), Animation size, and the selected outlet's X / Y / Z (mirrored). Cyan / yellow
+  crosses mark the outlets; click one to select it. Nothing else about saving changed (same .bak, same file sizes).
+- Size menu: "Fit to the window" (default) picks the biggest font size at which the Vehicle Models and Backfire pages need no sideways
+  scrolling; or choose 70 - 125 %. The Models page columns were also made narrower.
+- NOT tested on a real display / GPU here (no Tk or OpenGL in the build sandbox): logic and wiring are covered by tests/test_backfire_3d.py
+  and tests/test_ui_scale.py through the fake tkinter.
+
+Lamps tab: GPU viewport (v20)
+-----------------------------
+The Lamps preview is now the same GPU viewport as Models and Backfire: drag = free 360 orbit (nothing stops it, the camera moves live
+with the mouse), right-drag or Shift-drag = move, wheel = zoom (the page's scroll bar stays put), double-click = fit, click a lamp piece =
+select it in the list.  View sets the camera angle (Auto looks at the front or rear depending on the selection, and only changes when the
+selection moves to the other end; it never snaps back while you orbit).  Light picks which lamp parts are drawn, Zoom frames the selection,
+Dark scene uses the game's night lighting and a dark background.  Selected lamps are blue and lens candidates pink, drawn as see-through
+triangles (gl_viewport.TriLayer) a hair in front of the surface.  The car is sent to the GPU only when the pack changes.
+If moderngl / OpenGL 3.3 is missing, VPK_VIEWPORT=soft is set, or the viewport fails, the old software picture is used.
+Not tried on a real GPU or Mac (tests: tests/test_lamps_gl.py with a fake viewport).
+
+Wheels tab: GPU viewport (v21)
+------------------------------
+Same viewport as Models / Backfire / Lamps: drag = free 360 orbit, right-drag or Shift-drag = move, wheel = zoom (page does not scroll),
+double-click = fit.  View sets the camera angle, Wheel (left / right / both) chooses what is drawn and frames it.  The wheel is sent to the
+GPU only when the pack changes (texture edits, OBJ swap, undo).  Falls back to the software picture without moderngl / OpenGL 3.3, with
+VPK_VIEWPORT=soft, or if the viewport fails.  Tests: tests/test_wheels_gl.py (fake viewport).  Not tried on a real GPU or Mac.
+
+Less sideways scrolling (v22)
+-----------------------------
+Causes found by reading the layouts (no Tk here to measure): fixed-width viewports (Lamps 600, Wheels 520, Backfire 420), long one-line rows
+and long status text with wraplength 900-1000.  Changes:
+ - GPU viewports in Lamps and Wheels ask for 420x320 / 400x300 and stretch with the window (fill + expand), so they no longer force the page wide.
+ - Lamps: View + Zoom on one row, Light + Dark scene on another; the nudge row, its two check boxes and the colour row each split in two.
+ - Backfire: viewport asks for 360x340; the hint above it is shorter and wraps.
+ - Status lines wrap at 520-760 px (Lamps, Meters, Engine, Wheels, Backfire) instead of 1000.
+The page still scrolls sideways only if something is wider than the window; "Fit to window" measures that as before.
+
+Blender-style layout (v23)
+--------------------------
+New vpk_layout.py: Workspace = list | viewport | properties with draggable dividers; the properties column scrolls up / down only and holds
+collapsible panels (click a header to fold it); rows of buttons wrap onto the next line when the column is narrow (Flow).  Nothing in these
+tabs scrolls sideways any more, and the page itself no longer scrolls: the panels do.
+Converted: Lamps, Wheels, Backfire, Meters, Engine Sound.
+ - Lamps:   list | GPU viewport | Selected lamps, Add a lamp (folded), Lens covers (folded).
+ - Wheels:  list | GPU viewport | Textures and colours, Custom wheel.  Undo / Save are in the toolbar.
+ - Backfire: flames + car + outlets | viewport and live play | Flame shape, Outlet position, Playback, Texture.
+ - Meters:  layouts | sheet viewer (fills the middle) | Selected picture, Whole layout.
+ - Engine:  car list | the 8 loops (two lines per loop) | Loops, Copy a sound, Restore.
+Not changed: Models (already asset browser | viewport | properties with dividers) and Livery & Stickers (a different kind of page).
+The main window's minimum size went from 980x640 to 1060x640 because the navigation rail takes 194 px.
+Tests: tests/test_layout.py (wrapping maths, Flow with stub widgets).  The look and the dragging of dividers could not be checked here (no Tk).
+
+Models and Livery & Stickers (v24)
+----------------------------------
+ - Models: the page no longer scrolls sideways (backfire_edit.scrollable(horizontal=False): the page is always as wide as the window and
+   only scrolls up / down).  The inspector on the right is now a column that scrolls up / down only with folding panels (Properties,
+   Model tools).  Asset browser | viewport | inspector dividers, the remembered widths and the log are unchanged.  The status text wraps.
+ - Livery & Stickers: the sticker grid and the right-hand panel are separated by a divider you can drag (it was a fixed 360 px column).
+   The panel scrolls up / down only and its groups (Sticker, On the car, Export, All cars) are folding panels.  The four "1 Open ... 4 Save"
+   steps have their own line, so the toolbar cannot overflow; the Save bar is pinned to the bottom.
+
+Backfire and Lamps are modules of Vehicle Models (v25)
+------------------------------------------------------
+The rail no longer has Backfire and Lamps pages.  The Vehicle Models page has a MODULE strip on top: Parts & viewport | Backfire flames | Lamps.
+Each module is the same editor as before (same buttons, same GPU viewport, same Save), shown in the area below the strip.  Go menu: the
+pages are now Livery & Stickers (Ctrl+1), Vehicle Models (Ctrl+2), Wheels (Ctrl+3), Meters (Ctrl+4), Engine Sound (Ctrl+5), plus
+"Vehicle Models > Backfire flames / Lamps".  Ctrl+O / Ctrl+S act on the module in front; the Models-only keys (Delete, Ctrl+Z, search...)
+only work in Parts & viewport.  Tests updated (tests/test_ui_m6.py).  Not tried in real Tk.
+
+One viewport for Parts, Backfire and Lamps (v26)
+------------------------------------------------
+The three modules no longer have a viewport each.  The Vehicle Models page owns ONE viewport and ONE car; the module strip only swaps the
+left list, the bar under the viewport and the right-hand panels.  Switching module keeps the camera, the car and the Undo list.
+ - Parts & viewport: as before.
+ - Backfire flames: draws the flames and outlet crosses (an overlay layer) on the car open in Parts.  The old Cars folder / car list is gone:
+   open the car in Parts.  The backfire.wpk / backfire.bfx are still a separate file with their own Open, Undo flames and Save backfire.
+ - Lamps: edits the car open in Parts (same pack, same Undo, same Save car); the blue / pink overlay and "dark scene" are drawn in the shared viewport.
+ Ctrl+S in Lamps saves the car.  Not tried on a real GPU / real Tk (no display here).
+
+
+Full dark interface refresh (2026-11-27)
+========================================
+- Refined the shared ttk theme for modern, consistent controls: quieter borders, flatter buttons, clearer active states,
+  more comfortable control spacing, and unified page/header/status styles.
+- Added dark defaults for classic Tk controls as well as ttk: Text, Entry, Listbox, Canvas, Menu, LabelFrame,
+  Scrollbar, Scale, Spinbox, Checkbutton and Radiobutton. New dialogs inherit the same dark treatment.
+- Reworked the application chrome with a more structured header, stronger workspace rail, improved navigation
+  spacing, a local-workspace indicator, and a clear primary action hierarchy.
+- Applied the same presentation to Livery & Stickers, Vehicle Models (including Backfire and Lamps modules),
+  Wheels, Meters, Engine Sound, and the shared modal/help windows.
+- Replaced legacy bright preview backgrounds in the livery grid, wheel preview, car preview, meter preview and UV-fit
+  canvas and the software car-preview stage with dark neutral surfaces; retained white sticker tiles because they provide a useful image-preview surround.
+- Corrected text contrast for the empty livery browser and completed workflow steps.
+- No file parsing, serialization, import/export, rendering algorithms, editing operations, keyboard bindings or callbacks
+  were intentionally changed. WPK/VPK binary formats remain unchanged.
+- Validation: Python compileall; UI state/layout/browser tests; tab-specific tests; real Tk window construction under Xvfb
+  with screenshots of Livery, Models, Backfire, Wheels, Meters and Engine Sound.
+- GPU viewport tests were skipped by their existing environment guards; software-preview UI construction passed.
+
+
+Compact chrome follow-up (2026-11-27)
+------------------------------------
+- Removed the tall VPK TOOL / RE3DX+ / LOCAL WORKSPACE branding banner from the top of the main window.
+- The workspace rail and editor now begin directly beneath the application menu, giving the active editor the reclaimed vertical space.
+- No editor controls, navigation entries, callbacks, file handling, or file formats were changed.
+
+Camera (v26b): Backfire opens on the whole car (framed like Parts); 'Zoom to exhaust' still goes close. Switching module resets any close-up.
+
+v26c: Backfire 'Zoom to exhaust' and its view buttons, and Lamps' View / Zoom boxes, are gone: all modules use the Vehicle Models view buttons and Fit / reset camera.
+
+v26d: the app starts on Vehicle Models > Parts & viewport.

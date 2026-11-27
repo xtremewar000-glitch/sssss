@@ -30,6 +30,7 @@ except ImportError:                                       # pragma: no cover (no
     ImageTk = None
 
 import wpk_edit
+import vpk_layout as VL                   # Blender-style list | viewport | panels layout
 from wpk_edit import EditError, Pack
 
 try:
@@ -41,6 +42,16 @@ try:
     import backfire_edit
 except ImportError:                                       # pragma: no cover
     backfire_edit = None
+
+try:
+    import wpk_browser as WB
+except ImportError:                                       # pragma: no cover
+    WB = None
+try:
+    import gl_viewport as GLV
+    GLV_WHY = GLV.import_error()
+except Exception as _ex:                                  # no moderngl / OpenGL here: the software picture stays
+    GLV, GLV_WHY = None, "gl_viewport.py could not be loaded (%s)" % _ex
 
 LEFT, RIGHT = 0x100, 0x101
 MIRROR = np.array([-1, 1, -1])
@@ -319,7 +330,7 @@ def build_tab(tab_parent, root, app=None):
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk, colorchooser
 
-    parent = backfire_edit.scrollable(tab_parent) if backfire_edit else tab_parent
+    parent = tab_parent                     # no page scrolling: the panels scroll themselves (vpk_layout)
     prefs = wpk_view.load_prefs() if wpk_view else {}
 
     class Tab:
@@ -338,6 +349,9 @@ def build_tab(tab_parent, root, app=None):
             self.which = tk.StringVar(value="Left wheel (0x100)")
             self.view = tk.IntVar(value=1)
             self.status = UI.StatusLine("Choose the wheels folder.")
+            self.gl = self.cam = None              # the GPU viewport (see build_gl); None = the software picture
+            self.model_dirty = True                # the pack changed: the GPU copy is stale
+            self._drag = None
             self.build()
             parent.after(80, self.pump)
             if self.folder and os.path.isdir(self.folder):
@@ -345,90 +359,96 @@ def build_tab(tab_parent, root, app=None):
 
         # ---------------------------------------------------------------- layout
         def build(self):
-            top = ttk.Frame(parent, padding=(12, 10, 12, 4))
+            # Blender-style: toolbar on top, save bar + status at the bottom, between them list | viewport | panels (vpk_layout)
+            top = ttk.Frame(parent, padding=(12, 8, 12, 2))
             top.pack(fill="x")
-            ttk.Label(top, text="Wheels folder:").pack(side="left")
-            self.folder_lbl = ttk.Label(top, text=self.folder or "(none)", foreground="#8f9eb2")
-            self.folder_lbl.pack(side="left", padx=6)
             ttk.Button(top, text="Choose folder…", command=self.choose).pack(side="left")
             ttk.Button(top, text="Open one .wpk…", command=self.open_one).pack(side="left", padx=6)
-            ttk.Button(top, text="Help", command=self.help).pack(side="right")
+            self.b_undo = ttk.Button(top, text="Undo", command=self.do_undo)
+            self.b_undo.pack(side="left")
+            self.b_save = ttk.Button(top, text="Save", command=self.save)
+            self.b_save.pack(side="left", padx=6)
+            ttk.Button(top, text="Save as…", command=self.save_as).pack(side="left")
+            ttk.Button(top, text="Help", command=self.help).pack(side="left", padx=6)
+            fl = ttk.Frame(parent, padding=(12, 0, 12, 4))
+            fl.pack(fill="x")
+            ttk.Label(fl, text="Wheels folder:").pack(side="left")
+            self.folder_lbl = ttk.Label(fl, text=self.folder or "(none)", foreground="#8f9eb2")
+            self.folder_lbl.pack(side="left", padx=6)
+            bot = ttk.Frame(parent, padding=(12, 4, 12, 6))
+            bot.pack(fill="x", side="bottom")
+            self.status.bar(bot, ttk, tk, wraplength=900, side="left", fill="x", expand=True)
+            ttk.Separator(parent).pack(fill="x", side="bottom")
+            ws = self.ws = VL.Workspace(parent, left_w=390, right_w=400)
 
-            mid = ttk.Frame(parent, padding=(12, 4))
-            mid.pack(fill="both", expand=True)
-            left = ttk.Frame(mid)
-            left.pack(side="left", fill="y")
+            left = ws.left
             fr = ttk.Frame(left)
             fr.pack(fill="x")
             ttk.Label(fr, text="Filter:").pack(side="left")
             e = ttk.Entry(fr, textvariable=self.filter, width=22)
-            e.pack(side="left", padx=4)
+            e.pack(side="left", padx=4, fill="x", expand=True)
             self.filter.trace_add("write", lambda *_: self.fill())
+            lf = ttk.Frame(left)
+            lf.pack(fill="both", expand=True, pady=4)
             cols = ("kind", "tris", "tex")
-            self.tree = ttk.Treeview(left, columns=cols, height=16, selectmode="browse")
+            self.tree = ttk.Treeview(lf, columns=cols, height=16, selectmode="browse")
             self.tree.heading("#0", text="Pack")
             self.tree.heading("kind", text="Kind")
             self.tree.heading("tris", text="Tris")
             self.tree.heading("tex", text="Tex")
-            self.tree.column("#0", width=190)
-            self.tree.column("kind", width=100)
-            self.tree.column("tris", width=55, anchor="e")
-            self.tree.column("tex", width=35, anchor="e")
-            sb = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
+            self.tree.column("#0", width=150, stretch=True)
+            self.tree.column("kind", width=90, stretch=False)
+            self.tree.column("tris", width=50, anchor="e", stretch=False)
+            self.tree.column("tex", width=34, anchor="e", stretch=False)
+            sb = ttk.Scrollbar(lf, orient="vertical", command=self.tree.yview)
             self.tree.configure(yscrollcommand=sb.set)
-            self.tree.pack(side="left", fill="y", pady=4)
-            sb.pack(side="left", fill="y", pady=4)
+            self.tree.pack(side="left", fill="both", expand=True)
+            sb.pack(side="left", fill="y")
             self.tree.bind("<<TreeviewSelect>>", lambda _e: self.on_select())
 
-            right = ttk.Frame(mid)
-            right.pack(side="left", fill="both", expand=True, padx=(12, 0))
-            self.canvas = tk.Canvas(right, width=520, height=340, background="#8c9eb3", highlightthickness=0)
-            self.canvas.pack()
+            right = ws.center
+            self.canvas = tk.Canvas(right, width=520, height=340, background="#1a2635", highlightthickness=0)
+            self.canvas.pack(anchor="nw")
             bar = ttk.Frame(right)
-            bar.pack(fill="x", pady=4)
+            bar.pack(fill="x", side="bottom", pady=(4, 0))
             ttk.Label(bar, text="View:").pack(side="left")
             names = [v[0] for v in wpk_view.VIEWS] if wpk_view else ["Side"]
             self.view_cb = ttk.Combobox(bar, values=names, state="readonly", width=12)
             self.view_cb.current(min(1, len(names) - 1))
             self.view_cb.pack(side="left", padx=4)
-            self.view_cb.bind("<<ComboboxSelected>>", lambda _e: self.draw())
+            self.view_cb.bind("<<ComboboxSelected>>", lambda _e: self.on_view())
             ttk.Label(bar, text="Wheel:").pack(side="left", padx=(10, 0))
             self.which_cb = ttk.Combobox(bar, textvariable=self.which, state="readonly", width=20,
                                          values=["Left wheel (0x100)", "Right wheel (0x101)", "Both"])
             self.which_cb.pack(side="left", padx=4)
             self.which_cb.bind("<<ComboboxSelected>>", lambda _e: self.draw())
-            self.warn = ttk.Label(right, text="", foreground="#f85149", wraplength=520)
-            self.warn.pack(fill="x")
+            ws.flow(bar, right)
+            self.warn = ttk.Label(right, text="", foreground="#f85149", wraplength=400)
+            self.warn.pack(fill="x", side="bottom")
+            self.gl_info = ttk.Label(right, text="", foreground="#8f9eb2", wraplength=400, justify="left")
+            self.gl_info.pack(fill="x", side="bottom")
+            self.bar = bar
+            self.build_gl(right)
 
-            low = ttk.Frame(parent, padding=(12, 4))
-            low.pack(fill="x")
-            tx = ttk.LabelFrame(low, text="Textures and colours", padding=6)
-            tx.pack(side="left", fill="both", expand=True)
-            self.tlist = tk.Listbox(tx, height=5, width=46, exportselection=False)
-            self.tlist.pack(side="left", fill="y")
+            tx = ws.section("Textures and colours").body
+            self.tlist = tk.Listbox(tx, height=5, exportselection=False)
+            self.tlist.pack(fill="x")
             self.tlist.bind("<<ListboxSelect>>", lambda _e: self.show_thumb())
-            self.thumb_cv = tk.Canvas(tx, width=96, height=96, background="#444", highlightthickness=0)
-            self.thumb_cv.pack(side="left", padx=8)
-            bt = ttk.Frame(tx)
-            bt.pack(side="left")
+            row = ttk.Frame(tx)
+            row.pack(fill="x", pady=(6, 0))
+            self.thumb_cv = tk.Canvas(row, width=96, height=96, background="#141b26", highlightthickness=0)
+            self.thumb_cv.pack(side="left", padx=(0, 8))
+            bt = ttk.Frame(row)
+            bt.pack(side="left", fill="x", expand=True)
+            bt.columnconfigure(0, weight=1)
             for i, (txt, fn) in enumerate([("Export PNG…", self.tex_export), ("Replace from PNG…", self.tex_replace),
                                            ("Swap red / blue", self.tex_swap), ("Colour…", self.tex_colour),
                                            ("Fill with one colour…", self.tex_fill)]):
-                ttk.Button(bt, text=txt, command=fn).grid(row=i // 2, column=i % 2, sticky="ew", padx=2, pady=2)
+                ttk.Button(bt, text=txt, command=fn).grid(row=i, column=0, sticky="ew", padx=2, pady=1)
 
-            cw = ttk.LabelFrame(low, text="Custom wheel", padding=6)
-            cw.pack(side="left", padx=(12, 0), fill="y")
+            cw = ws.section("Custom wheel").body
             ttk.Button(cw, text="Export wheel as OBJ…", command=self.export_obj).pack(fill="x", pady=2)
             ttk.Button(cw, text="Replace with an OBJ…", command=self.replace_obj).pack(fill="x", pady=2)
-
-            bot = ttk.Frame(parent, padding=(12, 6, 12, 10))
-            bot.pack(fill="x")
-            self.b_undo = ttk.Button(bot, text="Undo", command=self.do_undo)
-            self.b_undo.pack(side="left")
-            self.b_save = ttk.Button(bot, text="Save", command=self.save)
-            self.b_save.pack(side="left", padx=6)
-            ttk.Button(bot, text="Save as…", command=self.save_as).pack(side="left")
-            self.status.bar(bot, ttk, tk, side="left", fill="x", expand=True, padx=12)
             self.set_buttons()
 
         def help(self):
@@ -506,6 +526,7 @@ def build_tab(tab_parent, root, app=None):
 
         # ---------------------------------------------------------------- state
         def refresh(self):
+            self.model_dirty = True
             self.tlist.delete(0, "end")
             for i, t in enumerate(self.pack.tex):
                 self.tlist.insert("end", "%d  %s   %dx%d  fmt %d" % (i, t["name"], t["w"], t["h"], t["fmt"]))
@@ -543,8 +564,138 @@ def build_tab(tab_parent, root, app=None):
                 self.say("undone")
 
         # ---------------------------------------------------------------- drawing
+        # ---- the GPU viewport
+        def pref(self, k):
+            try:
+                return wpk_view.load_prefs().get(k) if wpk_view else None
+            except Exception:
+                return None
+
+        def build_gl(self, right):
+            import os as _os
+            want = (GLV is not None and not GLV_WHY and WB is not None and wpk_view is not None
+                    and _os.environ.get("VPK_VIEWPORT", "gl").lower() != "soft" and self.pref("gpu_viewport") is not False)
+            if not want:
+                self.gl_info.configure(text="Software picture (%s). The GPU viewport with the free 360 orbit needs moderngl + OpenGL 3.3." % (
+                    GLV_WHY or ("switched off" if self.pref("gpu_viewport") is False else "not available")))
+                return
+            try:
+                v = wpk_view.VIEWS[min(1, len(wpk_view.VIEWS) - 1)]
+                self.cam = WB.Camera(*v[1:])
+                self.gl = GLV.create_viewport(right, self.cam, self.gl_failed, width=400, height=300, on_draw=self.gl_drawn)
+            except Exception:
+                self.gl = self.cam = None
+                return
+            w = self.gl.widget
+            self.canvas.pack_forget()
+            w.pack(before=self.bar, fill="both", expand=True)
+            for ev, fn in (("<ButtonPress-1>", self.vp_press), ("<B1-Motion>", self.vp_motion), ("<ButtonRelease-1>", self.vp_release),
+                           ("<MouseWheel>", self.vp_wheel), ("<Button-4>", self.vp_wheel), ("<Button-5>", self.vp_wheel),
+                           ("<Double-Button-1>", lambda _e: self.fit_view())):
+                w.bind(ev, fn)
+            for btn in (2, 3):
+                w.bind("<ButtonPress-%d>" % btn, self.vp_press_pan)
+                w.bind("<B%d-Motion>" % btn, self.vp_motion)
+                w.bind("<ButtonRelease-%d>" % btn, self.vp_release)
+            w.bind("<Shift-ButtonPress-1>", self.vp_press_pan)
+            self.gl_info.configure(text="Drag = orbit all the way round, right-drag or Shift-drag = move, wheel = zoom, double-click = fit.")
+
+        def gl_failed(self, reason, detail=""):
+            gl, self.gl = self.gl, None
+            if gl is not None:
+                try:
+                    gl.widget.pack_forget()
+                    gl.widget.destroy()
+                except Exception:
+                    pass
+            self.canvas.pack(before=self.bar)
+            self.gl_info.configure(text="Software picture (%s: %s)" % (reason, (detail.strip().splitlines() or [""])[-1]))
+            self.draw()
+
+        def gl_drawn(self, gl):
+            if gl.info and "GPU:" not in self.gl_info.cget("text"):
+                self.gl_info.configure(text="GPU: %s.  Drag = orbit 360, right-drag = move, wheel = zoom, double-click = fit." % gl.info)
+
+        def on_view(self):
+            """the View box: turn the camera to that angle (the GPU picture), or just draw again (the software one)"""
+            if self.gl is not None and wpk_view:
+                v = wpk_view.VIEWS[max(self.view_cb.current(), 0)]
+                self.cam.set_angles(*v[1:])
+                self.cam.fit()
+            self.draw()
+
+        def fit_view(self):
+            if self.cam is not None:
+                self.cam.fit()
+                self.draw()
+
+        def shown_tags(self):
+            tags = [c.tag for c in self.pack.chunks if c.tag != wpk_edit.WPK_SHADOW]
+            which = self.which.get()
+            if kind_of(self.pack) == "Race wheel" and which != "Both":
+                one = {LEFT} if which.startswith("Left") else {RIGHT}
+                return [t for t in tags if t in one] or tags
+            return tags
+
+        def draw_gl(self):
+            gl = self.gl
+            try:
+                if self.model_dirty:
+                    self._model = wpk_edit.view_model(self.pack, None)
+                    ao = os.path.splitext(self.path)[0] + ".ao" if self.path else None
+                    gl.set_model(self._model, ao)
+                    self.model_dirty = False
+                tags = set(self.shown_tags())
+                gl.set_visible(tags)
+                allc = [c for c in self._model[1] if c[8] != wpk_edit.WPK_SHADOW]
+                vis = [c for c in allc if c[8] in tags] or allc
+                if vis:
+                    lo = np.min([c[0:3] for c in vis], 0)
+                    hi = np.max([c[3:6] for c in vis], 0)
+                    gl.set_focus((lo + hi) / 2, max(float(np.linalg.norm(hi - lo)) / 2, 1.0))
+                else:
+                    gl.set_focus(None)
+                self.warn.configure(text="")
+                gl.request_draw()
+            except Exception as ex:
+                self.warn.configure(text="Cannot draw the wheel: %s" % ex)
+
+        def vp_press(self, e):
+            self._drag = dict(x=e.x, y=e.y, x0=e.x, y0=e.y, moved=False, btn=1)
+
+        def vp_press_pan(self, e):
+            self._drag = dict(x=e.x, y=e.y, x0=e.x, y0=e.y, moved=False, btn=2)
+
+        def vp_motion(self, e):
+            d = self._drag
+            if not d or self.gl is None:
+                return
+            if d["btn"] == 1:
+                if not d["moved"] and abs(e.x - d["x0"]) + abs(e.y - d["y0"]) < 4:
+                    return
+                d["moved"] = True
+                self.cam.orbit(e.x - d["x"], e.y - d["y"])           # nothing stops the orbit: a full turn on both axes
+            else:
+                d["moved"] = True
+                self.cam.pan_px(e.x - d["x"], e.y - d["y"], self.gl.upp)
+            d["x"], d["y"] = e.x, e.y
+            self.gl.request_draw()
+
+        def vp_release(self, e):
+            self._drag = None
+
+        def vp_wheel(self, e):
+            if self.gl is not None:
+                up = getattr(e, "num", 0) == 4 or getattr(e, "delta", 0) > 0
+                self.cam.zoom_by(1.2 if up else 1 / 1.2)
+                self.gl.request_draw()
+            return "break"                                           # the page's scroll bar must not move with the wheel
+
         def draw(self):
             if not (wpk_view and self.pack):
+                return
+            if self.gl is not None:
+                self.draw_gl()
                 return
             self.gen += 1
             gen = self.gen

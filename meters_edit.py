@@ -46,6 +46,7 @@ LAMP_SLOT = 4
 
 
 import vpk_ui as UI                       # shared confirmations / look (Milestone 6)
+import vpk_layout as VL                   # Blender-style list | viewport | panels layout
 
 
 class MetersError(Exception):
@@ -544,8 +545,7 @@ def build_tab(tab_parent, root, app=None):
     from PIL import ImageDraw, ImageTk
 
     try:
-        import backfire_edit
-        parent = backfire_edit.scrollable(tab_parent)
+        parent = tab_parent                     # no page scrolling: the panels scroll themselves (vpk_layout)
     except Exception:
         parent = tab_parent
     CW, CH = 560, 540
@@ -581,59 +581,62 @@ def build_tab(tab_parent, root, app=None):
 
         # ------------------------------------------------------------ layout
         def build(self):
-            top = ttk.Frame(parent, padding=(12, 10, 12, 4))
+            # Blender-style: toolbar on top, status at the bottom, between them list | sheet viewer | panels (vpk_layout)
+            top = ttk.Frame(parent, padding=(12, 8, 12, 2))
             top.pack(fill="x")
             ttk.Button(top, text="Open meters file…", command=self.open_dialog).pack(side="left")
-            ttk.Label(top, textvariable=self.name, foreground="#8f9eb2").pack(side="left", padx=8)
-            ttk.Button(top, text="Help", command=lambda: messagebox.showinfo("Meters", HELP, parent=root)).pack(side="right")
             self.b_undo = ttk.Button(top, text="Undo", command=self.do_undo, state="disabled")
-            self.b_undo.pack(side="right", padx=6)
-            ttk.Button(top, text="Save as…", command=self.save_as).pack(side="right")
-            ttk.Button(top, text="Save", command=self.save).pack(side="right", padx=6)
-            ttk.Label(parent, textvariable=self.info, foreground="#8f9eb2", padding=(12, 0)).pack(fill="x")
-            ef = ttk.Frame(parent, padding=(12, 0))
+            self.b_undo.pack(side="left", padx=6)
+            ttk.Button(top, text="Save", command=self.save).pack(side="left")
+            ttk.Button(top, text="Save as…", command=self.save_as).pack(side="left", padx=6)
+            ttk.Button(top, text="Help", command=lambda: messagebox.showinfo("Meters", HELP, parent=root)).pack(side="left")
+            ttk.Label(parent, textvariable=self.name, foreground="#8f9eb2", padding=(14, 0)).pack(fill="x")
+            ttk.Label(parent, textvariable=self.info, foreground="#8f9eb2", padding=(14, 0), wraplength=900, justify="left").pack(fill="x")
+            ef = ttk.Frame(parent, padding=(12, 2, 12, 4))
             ef.pack(fill="x")
             self.engine_lbl = ttk.Label(ef, textvariable=self.engine, foreground="#8f9eb2")
             self.engine_lbl.pack(side="left")
             ttk.Button(ef, text="Engine check…", command=lambda: self.check(True)).pack(side="left", padx=8)
+            self.status.bar(parent, ttk, tk, wraplength=900, fill="x", side="bottom", padx=12, pady=6)
+            ttk.Separator(parent).pack(fill="x", side="bottom")
+            ws = self.ws = VL.Workspace(parent, left_w=330, right_w=400)
 
-            mid = ttk.Frame(parent, padding=(12, 6))
-            mid.pack(fill="x")
-            left = ttk.Frame(mid)
-            left.pack(side="left", fill="y")
+            left = ws.left
             cols = ("n", "car", "size", "cells", "own")
-            self.tree = ttk.Treeview(left, columns=cols, show="headings", height=22, selectmode="browse")
-            for c, t, w, a in (("n", "#", 34, "center"), ("car", "Car", 150, "w"), ("size", "Sheet", 78, "e"), ("cells", "Cells", 40, "e"), ("own", "Own", 40, "e")):
+            lf = ttk.Frame(left)
+            lf.pack(fill="both", expand=True)
+            self.tree = ttk.Treeview(lf, columns=cols, show="headings", height=22, selectmode="browse")
+            for c, t, w, a in (("n", "#", 30, "center"), ("car", "Car", 120, "w"), ("size", "Sheet", 70, "e"), ("cells", "Cells", 38, "e"), ("own", "Own", 36, "e")):
                 self.tree.heading(c, text=t)
-                self.tree.column(c, width=w, anchor=a, stretch=False)
-            sb = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
+                self.tree.column(c, width=w, anchor=a, stretch=(c == "car"))
+            sb = ttk.Scrollbar(lf, orient="vertical", command=self.tree.yview)
             self.tree.configure(yscrollcommand=sb.set)
-            self.tree.pack(side="left", fill="y")
+            self.tree.pack(side="left", fill="both", expand=True)
             sb.pack(side="left", fill="y")
             self.tree.bind("<<TreeviewSelect>>", lambda _e: self.pick_layout())
 
-            right = ttk.Frame(mid)
-            right.pack(side="left", fill="both", expand=True, padx=(12, 0))
-            cf = ttk.Frame(right)
-            cf.pack(anchor="w")
-            self.canvas = tk.Canvas(cf, width=CW, height=CH, background="#808080", highlightthickness=0)
-            vs = ttk.Scrollbar(cf, orient="vertical", command=self.canvas.yview)
-            hs = ttk.Scrollbar(right, orient="horizontal", command=self.canvas.xview)
-            self.canvas.configure(yscrollcommand=vs.set, xscrollcommand=hs.set)
-            self.canvas.pack(side="left")
-            vs.pack(side="left", fill="y")
-            hs.pack(fill="x")
-            self.canvas.bind("<Button-1>", self.click)
+            right = ws.center
             bar = ttk.Frame(right)
-            bar.pack(fill="x", pady=4)
+            bar.pack(fill="x", side="bottom", pady=(4, 0))
+            gv = ttk.Frame(right)
+            gv.pack(fill="x", side="bottom", pady=(0, 2))
+            cf = ttk.Frame(right)
+            cf.pack(fill="both", expand=True)
+            self.canvas = tk.Canvas(cf, width=420, height=380, background="#202a38", highlightthickness=0)
+            vs = ttk.Scrollbar(cf, orient="vertical", command=self.canvas.yview)
+            hs = ttk.Scrollbar(cf, orient="horizontal", command=self.canvas.xview)
+            self.canvas.configure(yscrollcommand=vs.set, xscrollcommand=hs.set)
+            hs.pack(side="bottom", fill="x")
+            vs.pack(side="right", fill="y")
+            self.canvas.pack(side="left", fill="both", expand=True)
+            self.canvas.bind("<Button-1>", self.click)
             for lab, var, vals, w in (("Zoom", self.zoom, ["1x", "2x"], 4), ("Background", self.bg, ["Checker", "Dark", "Light"], 8)):
                 ttk.Label(bar, text=lab).pack(side="left", padx=(0, 2))
                 c = ttk.Combobox(bar, textvariable=var, values=vals, state="readonly", width=w)
                 c.pack(side="left", padx=(0, 10))
                 c.bind("<<ComboboxSelected>>", lambda _e: self.draw())
             ttk.Checkbutton(bar, text="Show picture borders", variable=self.grid_on, command=self.draw).pack(side="left")
-            gv = ttk.Frame(right)
-            gv.pack(fill="x", pady=(0, 4))
+            ws.flow(bar, right)
             ttk.Label(gv, text="View").pack(side="left", padx=(0, 2))
             vc = ttk.Combobox(gv, textvariable=self.view, values=["Sheet", "As in game"], state="readonly", width=10)
             vc.pack(side="left", padx=(0, 8))
@@ -647,26 +650,29 @@ def build_tab(tab_parent, root, app=None):
                           command=lambda _v: self.redraw_soon()).pack(side="left", padx=(2, 8))
             ttk.Checkbutton(gv, text="Shift lamp lit", variable=self.lamp_lit, command=self.draw).pack(side="left")
             ttk.Checkbutton(gv, text="Guides", variable=self.guides, command=self.draw).pack(side="left", padx=6)
+            ws.flow(gv, right)
 
-            ed = ttk.LabelFrame(parent, text="Selected picture", padding=8)
-            ed.pack(fill="x", padx=12, pady=(4, 2))
-            ttk.Label(ed, textvariable=self.cellinfo, foreground="#c9d4e3").pack(anchor="w")
+            ed = ws.section("Selected picture").body
+            ttk.Label(ed, textvariable=self.cellinfo, foreground="#c9d4e3", wraplength=340, justify="left").pack(anchor="w")
             r1 = ttk.Frame(ed)
             r1.pack(fill="x", pady=3)
             for t, f in (("Export tile PNG…", self.export_tile), ("Replace tile from PNG…", self.replace_tile)):
                 ttk.Button(r1, text=t, command=f).pack(side="left", padx=(0, 4))
-            ttk.Label(r1, text="   Use tile number").pack(side="left")
-            ttk.Entry(r1, textvariable=self.tile_no, width=6).pack(side="left", padx=3)
-            ttk.Button(r1, text="Set", command=self.use_tile).pack(side="left")
-            ttk.Button(r1, text="Empty cell", command=self.empty_cell).pack(side="left", padx=6)
-            sh = ttk.LabelFrame(parent, text="Whole layout", padding=8)
-            sh.pack(fill="x", padx=12, pady=(4, 2))
+            ws.flow(r1)
+            r1b = ttk.Frame(ed)
+            r1b.pack(fill="x", pady=3)
+            ttk.Label(r1b, text="Use tile number").pack(side="left")
+            ttk.Entry(r1b, textvariable=self.tile_no, width=6).pack(side="left", padx=3)
+            ttk.Button(r1b, text="Set", command=self.use_tile).pack(side="left")
+            ttk.Button(r1b, text="Empty cell", command=self.empty_cell).pack(side="left", padx=6)
+            ws.flow(r1b)
+            sh = ws.section("Whole layout").body
             r2 = ttk.Frame(sh)
             r2.pack(fill="x")
             for t, f in (("Export sheet PNG…", self.export_sheet), ("Replace whole sheet from PNG…", self.replace_sheet),
                          ("Remove unused tiles", self.remove_unused), ("Name tiles from sprite folder…", self.name_tiles)):
-                ttk.Button(r2, text=t, command=f).pack(side="left", padx=(0, 4))
-            self.status.bar(parent, ttk, tk, wraplength=1000, fill="x", padx=12, pady=6)
+                ttk.Button(r2, text=t, command=f).pack(side="left", padx=(0, 4), pady=2)
+            ws.flow(r2)
 
         # ------------------------------------------------------------ opening / saving
         def confirm_discard(self):

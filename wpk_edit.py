@@ -35,6 +35,7 @@ POOL = 65535                     # most vertices in one batch (the game's indice
 
 
 import vpk_ui as UI                       # shared confirmations / look (Milestone 6)
+import vpk_layout as VL                   # collapsible panels / up-down-only scrolling column
 
 
 class EditError(Exception):
@@ -1520,7 +1521,7 @@ def build_tab(parent, root, app=None):
     FREE = wpk_view.FREE if wpk_view else 6                 # value of the "Free" view radio (after the fixed views)
     LEVEL_COLOUR = {"info": "#8f9eb2", "success": "#3fb950", "warning": "#e8a317", "error": "#f85149"}
     OK, ORANGE = "#1b7f3b", "#e8710a"
-    W_, H_ = 600, 340
+    W_, H_ = 380, 300                                      # the picture's smallest size; it grows with the window
 
     class TexDialog:
         """Textures and materials window (Milestone 5).  Reads through wpk_texmgr; every change goes through the existing
@@ -1953,6 +1954,7 @@ def build_tab(parent, root, app=None):
             self.ao_on = tk.BooleanVar(value=True)
             self.persp_on = tk.BooleanVar(value=True)
             self.gpu_on = tk.BooleanVar(value=True)
+            self.modules, self.active = {}, None     # modules (Backfire, Lamps) that borrow this viewport; active = the one in front (None: Parts)
             self.build()
             self.log("info", "Open a car .wpk to start.")
             self.fill()                              # empty-state texts of the browser, inspector and viewport
@@ -1992,24 +1994,36 @@ def build_tab(parent, root, app=None):
             for col in (1, 4, 7):
                 locations.columnconfigure(col, weight=1)
             ttk.Label(locations, text="Cars").grid(row=0, column=0, sticky="w")
-            ttk.Label(locations, textvariable=self.cars_txt, foreground="#8f9eb2").grid(row=0, column=1, sticky="ew", padx=(5, 5))
+            ttk.Label(locations, textvariable=self.cars_txt, foreground="#8f9eb2", width=1).grid(row=0, column=1, sticky="ew", padx=(5, 5))
             ttk.Button(locations, text="Browse", command=self.browse_cars).grid(row=0, column=2, padx=(0, 12))
             ttk.Label(locations, text="Arcade").grid(row=0, column=3, sticky="w")
-            ttk.Label(locations, textvariable=self.arc_txt, foreground="#8f9eb2").grid(row=0, column=4, sticky="ew", padx=(5, 5))
+            ttk.Label(locations, textvariable=self.arc_txt, foreground="#8f9eb2", width=1).grid(row=0, column=4, sticky="ew", padx=(5, 5))
             ttk.Button(locations, text="Browse", command=self.browse_arcade).grid(row=0, column=5, padx=(0, 12))
             ttk.Label(locations, text="Game source").grid(row=0, column=6, sticky="w")
-            ttk.Label(locations, textvariable=self.game_txt, foreground="#8f9eb2").grid(row=0, column=7, sticky="ew", padx=(5, 5))
+            ttk.Label(locations, textvariable=self.game_txt, foreground="#8f9eb2", width=1).grid(row=0, column=7, sticky="ew", padx=(5, 5))
             ttk.Button(locations, text="Browse", command=self.browse_game).grid(row=0, column=8)
 
             # ---- three resizable columns: ASSET BROWSER | 3D VIEWPORT | PROPERTIES (+ model tools)
             body = ttk.PanedWindow(shell, orient="horizontal")
             body.grid(row=2, column=0, sticky="nsew")
-            left = ttk.Frame(body, padding=(0, 0, 6, 0))
+            # the three columns hold stacks: Parts' own panels and one set per module (Backfire, Lamps) that share this viewport
+            self.left_holder = ttk.Frame(body)
+            self.left_holder.rowconfigure(0, weight=1)
+            self.left_holder.columnconfigure(0, weight=1)
+            left = ttk.Frame(self.left_holder, padding=(0, 0, 6, 0))
+            left.grid(row=0, column=0, sticky="nsew")
             center = ttk.Frame(body, padding=(3, 0, 3, 0))
-            right = ttk.Frame(body, padding=(6, 0, 0, 0))
-            body.add(left, weight=0)
+            self.right_holder = ttk.Frame(body)
+            self.right_holder.rowconfigure(0, weight=1)
+            self.right_holder.columnconfigure(0, weight=1)
+            self.rscroll = VL.VScroll(self.right_holder)        # the inspector scrolls up / down only, in folding panels
+            self.rscroll.outer.grid(row=0, column=0, sticky="nsew")
+            right = self.rscroll.body
+            self.center = center
+            self._m_left, self._m_right, self._m_bar = {}, {}, {}
+            body.add(self.left_holder, weight=0)
             body.add(center, weight=1)
-            body.add(right, weight=0)
+            body.add(self.right_holder, weight=0)
             self._body = body
             self._sashes_set = False
             body.bind("<Configure>", self._place_sashes)
@@ -2104,23 +2118,29 @@ def build_tab(parent, root, app=None):
             for col in range(4):
                 controls.columnconfigure(col, weight=1)
             ttk.Button(controls, text="Fit / reset camera", command=self.fit_view).grid(row=1, column=3, sticky="ew", padx=1, pady=1)
-            options = ttk.Frame(center)
-            options.grid(row=3, column=0, sticky="ew", pady=(5, 0))
+            options_box = ttk.Frame(center)
+            options_box.grid(row=3, column=0, sticky="ew", pady=(5, 0))
+            options = ttk.Frame(options_box)
+            options.pack(fill="x")
             ttk.Checkbutton(options, text="Selected parts only", variable=self.only_sel, command=lambda: self.render(reuse=True)).pack(side="left")
             ttk.Checkbutton(options, text="Game-visible parts only", variable=self.engine_only, command=lambda: self.render(reuse=True)).pack(side="left", padx=(10, 0))
-            ttk.Label(options, text="Lighting").pack(side="left", padx=(14, 0))
+            options = ttk.Frame(options_box)
+            options.pack(fill="x", pady=(3, 0))
+            ttk.Label(options, text="Lighting").pack(side="left")
             lb = ttk.Combobox(options, textvariable=self.lights, values=LIGHT_MODES, state="readonly", width=22)
             lb.pack(side="left", padx=(6, 0))
             lb.bind("<<ComboboxSelected>>", lambda _e: self.render(reuse=True))
             self.gl_row = ttk.Frame(center)
             self.gl_row.grid(row=4, column=0, sticky="ew", pady=(5, 0))
-            ttk.Checkbutton(self.gl_row, text="GPU viewport", variable=self.gpu_on, command=self._gpu_toggled).pack(side="left")
-            ttk.Label(self.gl_row, text="Shading").pack(side="left", padx=(12, 0))
-            sb = ttk.Combobox(self.gl_row, textvariable=self.shading, values=list(GLV.SHADINGS) if GLV else [], state="readonly", width=30)
-            sb.pack(side="left", padx=(6, 0))
+            ttk.Checkbutton(self.gl_row, text="GPU viewport", variable=self.gpu_on, command=self._gpu_toggled).grid(row=0, column=0, sticky="w")
+            ttk.Label(self.gl_row, text="Shading").grid(row=0, column=1, sticky="e", padx=(10, 0))
+            sb = ttk.Combobox(self.gl_row, textvariable=self.shading, values=list(GLV.SHADINGS) if GLV else [], state="readonly", width=20)
+            sb.grid(row=0, column=2, sticky="w", padx=(6, 0))
             sb.bind("<<ComboboxSelected>>", lambda _e: self._gl_look())
-            for txt, var in (("Reflections", self.refl_on), ("Baked AO", self.ao_on), ("Perspective", self.persp_on)):
-                ttk.Checkbutton(self.gl_row, text=txt, variable=var, command=self._gl_look).pack(side="left", padx=(10, 0))
+            for i, (txt, var) in enumerate((("Reflections", self.refl_on), ("Baked AO", self.ao_on), ("Perspective", self.persp_on))):
+                ttk.Checkbutton(self.gl_row, text=txt, variable=var, command=self._gl_look).grid(row=1, column=i, sticky="w", padx=(0, 10), pady=(3, 0))
+            self._parts_rows = (options_box, self.gl_row)       # the view buttons (controls) stay: every module uses the page's camera buttons
+            self._parts_left = left
             self.gl_info = ttk.Label(center, text="", foreground="#8f9eb2")
             self.gl_info.grid(row=6, column=0, sticky="ew")
             self.warn = ttk.Label(center, text="", wraplength=520, foreground=ORANGE, justify="left")
@@ -2130,9 +2150,7 @@ def build_tab(parent, root, app=None):
                 self.warn.configure(text="wpk_view.py is missing: preview unavailable; editing still works.")
 
             # ---------------- right: properties inspector + model tools
-            right.columnconfigure(0, weight=1)
-            props = ttk.LabelFrame(right, text="PROPERTIES", padding=7)
-            props.grid(row=0, column=0, sticky="nsew")
+            props = VL.Section(right, "Properties", on_toggle=lambda _s: None).body
             props.columnconfigure(0, weight=1)
             self.p_name = tk.StringVar()
             self.p_sub = tk.StringVar()
@@ -2168,8 +2186,7 @@ def build_tab(parent, root, app=None):
             self.tex_tree.grid(row=8, column=0, sticky="ew")
             ttk.Label(pf, textvariable=self.p_note, foreground="#8f9eb2", wraplength=250, justify="left").grid(row=9, column=0, sticky="w", pady=(6, 0))
 
-            model_tools = ttk.LabelFrame(right, text="Model tools", padding=6)
-            model_tools.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+            model_tools = VL.Section(right, "Model tools").body
             for col in range(2):
                 model_tools.columnconfigure(col, weight=1)
             self.b_tex = ttk.Button(model_tools, text="Textures…", command=self.textures, state="disabled")
@@ -2218,13 +2235,99 @@ def build_tab(parent, root, app=None):
             footer = ttk.Frame(shell, padding=(0, 8, 0, 0))
             footer.grid(row=4, column=0, sticky="ew", pady=(7, 0))
             ttk.Separator(footer).pack(fill="x", pady=(0, 7))
-            self.status.bar(footer, ttk, tk, side="left", fill="x", expand=True)
+            self.status.bar(footer, ttk, tk, wraplength=700, side="left", fill="x", expand=True)
             self.b_save = ttk.Button(footer, text="Save to game", command=self.save, state="disabled", style="VPK.Primary.TButton")
             self.b_save.pack(side="right")
             self.b_saveas = ttk.Button(footer, text="Save as…", command=self.save_as, state="disabled")
             self.b_saveas.pack(side="right", padx=(0, 7))
             self.b_bake = ttk.Button(footer, text="Bake AO…", command=self.bake_ao, state="disabled")
             self.b_bake.pack(side="right", padx=(0, 7))
+
+        # ---------------------------------------------------------------- modules that share this viewport (Backfire, Lamps)
+        def module_left(self, key):
+            """the frame in the left column that belongs to module `key` (created once)"""
+            f = self._m_left.get(key)
+            if f is None:
+                f = self._m_left[key] = ttk.Frame(self.left_holder, padding=(0, 0, 6, 0))
+                f.grid(row=0, column=0, sticky="nsew")
+            return f
+
+        def module_right(self, key):
+            """the up / down scrolling column of module `key` in the right column (a VL.VScroll)"""
+            v = self._m_right.get(key)
+            if v is None:
+                v = self._m_right[key] = VL.VScroll(self.right_holder)
+                v.outer.grid(row=0, column=0, sticky="nsew")
+            return v
+
+        def module_bar(self, key):
+            """the frame under the viewport that belongs to module `key` (shown instead of Parts' view / lighting rows)"""
+            f = self._m_bar.get(key)
+            if f is None:
+                f = self._m_bar[key] = ttk.Frame(self.center)
+                f.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+                f.grid_remove()
+            return f
+
+        def register_module(self, key, obj):
+            self.modules[key] = obj
+
+        def activate(self, key):
+            """bring module `key` (or "parts") in front: its panels replace Parts', the viewport stays and is handed to it"""
+            prev = self.active
+            new = self.modules.get(key) if key != "parts" else None
+            if prev is not None and prev is not new and hasattr(prev, "on_leave"):
+                try:
+                    prev.on_leave()
+                except Exception:
+                    self.log("warning", "Leaving %s failed" % key, traceback.format_exc())
+            self.active = new
+            if self.gl is not None:
+                self.gl.set_focus(None)                            # every module starts on the whole car
+            for k, f in self._m_bar.items():
+                if k == key:
+                    f.grid()
+                else:
+                    f.grid_remove()
+            for row in self._parts_rows:
+                if new is None:
+                    row.grid()
+                else:
+                    row.grid_remove()
+            if new is None:
+                self._parts_left.tkraise()
+                self.rscroll.outer.tkraise()
+                if self.gl is not None:
+                    self._gl_look()
+                self._reset_bg()
+            else:
+                if self.gl is not None:
+                    self._gl_look()                                # start from Parts' look and background; the module changes what it needs
+                self._reset_bg()
+                self.module_left(key).tkraise()
+                self.module_right(key).outer.tkraise()
+                if hasattr(new, "on_enter"):
+                    try:
+                        new.on_enter()
+                    except Exception:
+                        self.log("warning", "Entering %s failed" % key, traceback.format_exc())
+            if self.pack:
+                self.render(reuse=True)
+
+        def _reset_bg(self):
+            gl = self.gl
+            if gl is not None and hasattr(gl, "reset_background"):
+                gl.reset_background()
+
+        def _notify(self, kind):
+            """tell the modules the car changed: kind = "open" (a different car / reloaded) or "edit" (the same car, edited or undone)"""
+            for m in list(self.modules.values()):
+                fn = getattr(m, "pack_changed", None)
+                if fn:
+                    try:
+                        fn(kind)
+                    except Exception:
+                        self.log("warning", "A module could not follow the car change", traceback.format_exc())
 
         def help(self):
             w = tk.Toplevel(root)
@@ -2477,6 +2580,7 @@ def build_tab(parent, root, app=None):
             self.log("success", "Opened %s: %d parts, %d triangles%s" % (
                 os.path.basename(f), len(self.pack.chunks), nt, "" if self.stock is None and not self._borrowed() else
                 "  (aero kit: textures borrowed from the stock pack)"))
+            self._notify("open")
 
         def _borrowed(self):
             return any(not t["raw"] for t in self.pack.tex)
@@ -2646,6 +2750,7 @@ def build_tab(parent, root, app=None):
             self.render()
             self.say(msg)
             self._tex_sync()
+            self._notify("edit")
 
         def do_undo(self):
             if self.undo:
@@ -2820,7 +2925,7 @@ def build_tab(parent, root, app=None):
                 return
             if dry["covers"] and not messagebox.askyesno(
                     "Headlights", "%d triangles of the body would become clear glass (the solid dark cover over the lamps).\n\n"
-                    "If the car has black trim right beside a lamp, some of it may be caught. The Lamps tab can show exactly which "
+                    "If the car has black trim right beside a lamp, some of it may be caught. The Lamps module can show exactly which "
                     "triangles (\"Show what would turn to glass\", pink) and lets you make the rule stricter.\n\nApply it here?" % dry["covers"], parent=root):
                 return
             try:
@@ -2926,7 +3031,7 @@ def build_tab(parent, root, app=None):
             ttk.Label(f, textvariable=info, wraplength=520).grid(row=6, column=0, columnspan=3, sticky="w", pady=(6, 2))
             bar = ttk.Progressbar(f, length=520, mode="determinate")
             bar.grid(row=7, column=0, columnspan=3, pady=(2, 6))
-            log = tk.Text(f, width=76, height=8, state="disabled", background="#f4f4f4")
+            log = tk.Text(f, width=76, height=8, state="disabled", background="#141b26", foreground="#e6edf6", insertbackground="#e6edf6", selectbackground="#24577b", selectforeground="#ffffff")
             log.grid(row=8, column=0, columnspan=3)
             btns = ttk.Frame(f)
             btns.grid(row=9, column=0, columnspan=3, sticky="e", pady=(8, 0))
@@ -3325,7 +3430,7 @@ def build_tab(parent, root, app=None):
             ttk.Label(f, textvariable=info, wraplength=520, foreground="#8f9eb2").grid(row=6, column=0, columnspan=3, sticky="w", pady=(6, 2))
             bar = ttk.Progressbar(f, length=520, mode="determinate")
             bar.grid(row=7, column=0, columnspan=3, pady=(2, 6))
-            log = tk.Text(f, width=76, height=7, state="disabled", background="#f4f4f4")
+            log = tk.Text(f, width=76, height=7, state="disabled", background="#141b26", foreground="#e6edf6", insertbackground="#e6edf6", selectbackground="#24577b", selectforeground="#ffffff")
             log.grid(row=8, column=0, columnspan=3)
             bt = ttk.Frame(f)
             bt.grid(row=9, column=0, columnspan=3, sticky="e", pady=(8, 0))
@@ -3514,7 +3619,8 @@ def build_tab(parent, root, app=None):
         def _set_gl_ui(self, on, why=""):
             try:
                 if on:
-                    self.gl_row.grid()
+                    if self.active is None:
+                        self.gl_row.grid()
                     self.gl_info.configure(text="")
                 else:
                     for ch in self.gl_row.winfo_children():
@@ -3596,7 +3702,17 @@ def build_tab(parent, root, app=None):
             show = {t for t in show if light_shown(t, self.lights.get())}
             if self.engine_only.get():
                 show = {t for t in show if engine_draws(t)}
+            m = self.active
+            if m is not None and hasattr(m, "shown_tags"):
+                show = set(m.shown_tags(show))                     # a module decides what its view of the car shows
             return show
+
+        def _view_selection(self):
+            """the tags the viewport outlines: the selected parts (Parts) or whatever the module in front wants"""
+            m = self.active
+            if m is not None and hasattr(m, "selection_tags"):
+                return list(m.selection_tags())
+            return self.sel_tags() if self.pack else []
 
         def _render_gl(self, reuse):
             if not (reuse and self._model is not None):
@@ -3611,7 +3727,10 @@ def build_tab(parent, root, app=None):
                 self.gl.set_model(self._model, ao)
             self.warn.configure(text="")
             self.gl.set_visible(self._shown_tags())
-            self.gl.set_selection(self.sel_tags())
+            self.gl.set_selection(self._view_selection())
+            m = self.active
+            if m is not None and hasattr(m, "viewport_changed"):
+                m.viewport_changed()
 
         def render(self, reuse=False, fast=False):
             """redraw the car.  reuse=True keeps the decoded model (orbit / pan / zoom / visibility / selection change nothing in it);
@@ -3761,6 +3880,9 @@ def build_tab(parent, root, app=None):
             self.render(reuse=True)
 
         def fit_view(self):
+            m = self.active
+            if m is not None and hasattr(m, "fit_view"):
+                return m.fit_view()
             vi = self.view.get()
             self.cam.set_angles(*(VIEWS[vi][1:] if vi < len(VIEWS) else (-35.0, 14.0)))
             self.cam.fit()
@@ -3768,12 +3890,21 @@ def build_tab(parent, root, app=None):
 
         # ---- mouse: drag = orbit, right / Shift drag = pan, wheel = zoom, click = pick
         def _vp_press(self, e):
+            m = self.active
+            if m is not None and hasattr(m, "vp_press"):
+                return m.vp_press(e)                       # a module in front handles the mouse itself
             self._drag = dict(x=e.x, y=e.y, x0=e.x, y0=e.y, moved=False, btn=1)
 
         def _vp_press_pan(self, e):
+            m = self.active
+            if m is not None and hasattr(m, "vp_press_pan"):
+                return m.vp_press_pan(e)                       # a module in front handles the mouse itself
             self._drag = dict(x=e.x, y=e.y, x0=e.x, y0=e.y, moved=False, btn=2)
 
         def _vp_motion(self, e):
+            m = self.active
+            if m is not None and hasattr(m, "vp_motion"):
+                return m.vp_motion(e)                       # a module in front handles the mouse itself
             d = self._drag
             if not d or not self.pack:
                 return
@@ -3790,6 +3921,9 @@ def build_tab(parent, root, app=None):
             self.render(reuse=True, fast=True)
 
         def _vp_release(self, e):
+            m = self.active
+            if m is not None and hasattr(m, "vp_release"):
+                return m.vp_release(e)                       # a module in front handles the mouse itself
             d, self._drag = self._drag, None
             if not d:
                 return
@@ -3799,6 +3933,9 @@ def build_tab(parent, root, app=None):
                 self.viewport_pick(e.x, e.y, additive=bool(e.state & 0x5))              # Ctrl or Shift = add / remove
 
         def _vp_wheel(self, e):
+            m = self.active
+            if m is not None and hasattr(m, "vp_wheel"):
+                return m.vp_wheel(e)                       # a module in front handles the mouse itself
             if not self.pack:
                 return "break"
             up = getattr(e, "num", 0) == 4 or getattr(e, "delta", 0) > 0
@@ -3825,7 +3962,7 @@ def build_tab(parent, root, app=None):
         def draw_overlay(self):
             """outline + tint of the selected parts, built from the last picture's per-pixel part map (no re-render)"""
             if self.gl is not None:
-                self.gl.set_selection(self.sel_tags() if self.pack else [])
+                self.gl.set_selection(self._view_selection())
                 return
             self.canvas.delete("sel")
             self._ov = None

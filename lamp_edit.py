@@ -53,6 +53,7 @@ ROLES = {                                       # name -> (parts it goes into, f
 
 
 import vpk_ui as UI                       # shared confirmations / look (Milestone 6)
+import vpk_layout as VL                   # Blender-style list | viewport | panels layout
 
 
 def is_lamp_tag(t):
@@ -831,7 +832,7 @@ def _tilt_matrix(n0, n1):
 # ================================================================================================ the tab
 HELP = """Lamps  -  move, resize, reshape, add and remove a car's headlights and tail lights
 
-1. Open car .wpk (or "Use the car from the Models tab").  The list is every lamp piece of the car, by part:
+1. Open car .wpk (or "Use the car from Parts & viewport").  The list is every lamp piece of the car, by part:
      garage 0x110     drawn in the garage / menus
      lamps on 0x111   drawn in a race: bulbs, reflectors, front glow
      tail glow 0x112  drawn in a race: the running lights.   stop glow 0x113: drawn while braking
@@ -868,7 +869,7 @@ Notes
 """
 
 
-def build_tab(tab_parent, root, app=None):
+def build_tab(tab_parent, root, app=None, host=None):
     import queue
     import threading
     import tkinter as tk
@@ -876,35 +877,44 @@ def build_tab(tab_parent, root, app=None):
 
     from PIL import Image, ImageTk
 
+    parent = tab_parent
+    host = host or getattr(app, "models", None)             # the Models page: it owns the car and the one shared viewport
     try:
-        import backfire_edit
-        parent = backfire_edit.scrollable(tab_parent)
-    except Exception:
-        parent = tab_parent
+        import wpk_browser as WB
+    except ImportError:
+        WB = None
+    try:
+        import gl_viewport as GLV
+        GLV_WHY = GLV.import_error()
+    except Exception as ex:                                  # no moderngl / OpenGL here: the software picture stays
+        GLV, GLV_WHY = None, "gl_viewport.py could not be loaded (%s)" % ex
     VIEWS = {"Auto": None, "Rear": (180, 0), "Rear 3/4": (145, 16), "Front": (0, 0), "Front 3/4": (-35, 14),
              "Left side": (270, 0), "Right side": (90, 0), "Top": (0, 89)}
     LIGHTS = we.LIGHT_MODES + ("All lamp parts",)
     SIDE_ORDER = {"L": 0, "C": 1, "R": 2}
-    W_, H_ = 600, 340
 
     class Tab:
+        """The Lamps module of the Vehicle Models page.  It edits the car that is open in Parts (same pack, same Undo, same Save), draws in
+        the page's one viewport (Models owns it; this adds a blue / pink overlay and its own camera moves) and has its own list, panels
+        and bar.  host = the Models tab (wpk_edit)."""
+        pack = property(lambda s: s.host.pack)
+        path = property(lambda s: s.host.path)
+        stock = property(lambda s: s.host.stock)
+        gl = property(lambda s: s.host.gl)
+        cam = property(lambda s: s.host.cam)
+        dirty = property(lambda s: s.host.dirty, lambda s, v: setattr(s.host, "dirty", v))
+
         def __init__(self):
-            self.pack = None
-            self.path = None
-            self.stock = None
-            self.undo = []
-            self.dirty = False
+            self.host = host
             self.lamps = []                 # in list order
-            self.texcache = []
-            self.q = queue.Queue()
-            self.gen = 0
-            self.photo = None
-            self.last_image = None
-            self.busy = False
-            self.again = False
+            self.layer = None               # the overlay layer in the shared viewport
+            self.active = False
+            self._mine = False              # True while this module itself edits the car (it refreshes itself then)
+            self._drag = None
+            self._auto_side = None
+            self.lens_dry = None
             sv = tk.StringVar
-            self.status = UI.StatusLine("Open a car .wpk to edit its lamps.")
-            self.name = sv(value="")
+            self.status = UI.StatusLine("Open a car in Parts & viewport to edit its lamps.")
             self.v_filter = sv(value="All parts")
             self.v_view = sv(value="Auto")
             self.v_light = sv(value="All lamp parts")
@@ -935,27 +945,22 @@ def build_tab(tab_parent, root, app=None):
             self.lens_msg = sv(value="")
             self.build()
             self.set_role()
-            parent.after(80, self.pump)
+            host.register_module("lamps", self)
 
         # ------------------------------------------------------------ layout
         def build(self):
-            top = ttk.Frame(parent, padding=(12, 10, 12, 4))
-            top.pack(fill="x")
-            ttk.Button(top, text="Open car .wpk…", command=self.open_dialog).pack(side="left")
-            self.btn_models = ttk.Button(top, text="Use the car from the Models tab", command=self.from_models)
-            self.btn_models.pack(side="left", padx=6)
-            ttk.Label(top, textvariable=self.name, foreground="#8f9eb2").pack(side="left", padx=6)
-            ttk.Button(top, text="Help", command=lambda: messagebox.showinfo("Lamps", HELP, parent=root)).pack(side="right")
-            ttk.Button(top, text="Copy lamps to other kits…", command=self.copy_kits).pack(side="right", padx=6)
-            self.btn_undo = ttk.Button(top, text="Undo", command=self.do_undo, state="disabled")
-            self.btn_undo.pack(side="right", padx=6)
-            ttk.Button(top, text="Save as…", command=self.save_as).pack(side="right")
-            ttk.Button(top, text="Save to game", command=self.save).pack(side="right", padx=6)
+            # panels only: the list on the left, a bar under the viewport, folding panels on the right; the viewport itself is the page's
+            left = host.module_left("lamps")
+            bar = host.module_bar("lamps")
+            ws = self.ws = VL.Slot(left, host.module_right("lamps"), bar)
 
-            mid = ttk.Frame(parent, padding=(12, 4))
-            mid.pack(fill="x")
-            left = ttk.Frame(mid)
-            left.pack(side="left", fill="y")
+            # ---- left: toolbar and the lamp list
+            tb = ttk.Frame(left)
+            tb.pack(fill="x", pady=(0, 6))
+            ttk.Label(tb, text="LAMPS", font=("TkDefaultFont", 10, "bold")).pack(side="left", padx=(0, 10))
+            ttk.Button(tb, text="Undo", command=self.do_undo).pack(side="left")
+            ttk.Button(tb, text="Copy to kits…", command=self.copy_kits).pack(side="left", padx=4)
+            ttk.Button(tb, text="Help", command=lambda: messagebox.showinfo("Lamps", HELP, parent=root)).pack(side="left")
             fr = ttk.Frame(left)
             fr.pack(fill="x")
             ttk.Label(fr, text="Show:").pack(side="left")
@@ -963,94 +968,107 @@ def build_tab(tab_parent, root, app=None):
                               values=["All parts"] + [STATE_NAMES[t] for t in (0,) + LAMP_TAGS[:4]] + ["High brake lamps (0x141-0x17f)"])
             cb.pack(side="left", padx=4)
             cb.bind("<<ComboboxSelected>>", lambda _e: self.fill())
-            cols = ("part", "side", "x", "y", "z", "size", "tris")
-            self.tree = ttk.Treeview(left, columns=cols, show="headings", height=14, selectmode="extended")
-            for c, t, w, a in (("part", "Part", 70, "w"), ("side", "Side", 36, "center"), ("x", "X", 52, "e"), ("y", "Y", 46, "e"),
-                               ("z", "Z", 52, "e"), ("size", "W x H x D", 132, "e"), ("tris", "Tris", 40, "e")):
-                self.tree.heading(c, text=t)
-                self.tree.column(c, width=w, anchor=a, stretch=False)
-            sb = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
-            self.tree.configure(yscrollcommand=sb.set)
-            self.tree.pack(side="left", pady=4)
-            sb.pack(side="left", fill="y", pady=4)
-            self.tree.bind("<<TreeviewSelect>>", lambda _e: self.on_select())
-
-            right = ttk.Frame(mid)
-            right.pack(side="left", fill="both", expand=True, padx=(12, 0))
-            self.blank = ImageTk.PhotoImage(Image.new("RGB", (W_, H_), (140, 158, 179)))
-            self.canvas = tk.Label(right, image=self.blank, borderwidth=0)
-            self.canvas.pack(anchor="w")
-            bar = ttk.Frame(right)
-            bar.pack(fill="x", pady=4)
-            for lab, var, vals, w in (("View", self.v_view, list(VIEWS), 9), ("Light", self.v_light, list(LIGHTS), 24),
-                                      ("Zoom", self.v_zoom, ["Whole car", "Close on selection"], 17)):
-                ttk.Label(bar, text=lab + ":").pack(side="left", padx=(0, 2))
-                c = ttk.Combobox(bar, textvariable=var, values=vals, state="readonly", width=w)
-                c.pack(side="left", padx=(0, 8))
-                c.bind("<<ComboboxSelected>>", lambda _e: self.render())
-            ttk.Checkbutton(bar, text="Dark scene", variable=self.v_night, command=self.render).pack(side="left")
-
             sel = ttk.Frame(left)
-            sel.pack(fill="x")
+            sel.pack(fill="x", side="bottom", pady=(4, 0))
             for t, f in (("Left", lambda: self.select_side("L")), ("Right", lambda: self.select_side("R")),
                          ("Whole part", self.select_part), ("None", lambda: self.tree.selection_set(()))):
-                ttk.Button(sel, text=t, width=9, command=f).pack(side="left", padx=1)
+                ttk.Button(sel, text=t, width=8, command=f).pack(side="left", padx=1)
+            lf = ttk.Frame(left)
+            lf.pack(fill="both", expand=True, pady=4)
+            cols = ("part", "side", "x", "y", "z", "size", "tris")
+            self.tree = ttk.Treeview(lf, columns=cols, show="headings", height=14, selectmode="extended")
+            for c, t, w, a in (("part", "Part", 62, "w"), ("side", "Side", 34, "center"), ("x", "X", 46, "e"), ("y", "Y", 42, "e"),
+                               ("z", "Z", 46, "e"), ("size", "W x H x D", 104, "e"), ("tris", "Tris", 36, "e")):
+                self.tree.heading(c, text=t)
+                self.tree.column(c, width=w, anchor=a, stretch=(c == "size"))
+            sb = ttk.Scrollbar(lf, orient="vertical", command=self.tree.yview)
+            self.tree.configure(yscrollcommand=sb.set)
+            self.tree.pack(side="left", fill="both", expand=True)
+            sb.pack(side="left", fill="y")
+            self.tree.bind("<<TreeviewSelect>>", lambda _e: self.on_select())
 
-            ed = ttk.LabelFrame(parent, text="Selected lamps", padding=8)
-            ed.pack(fill="x", padx=12, pady=(4, 2))
-            self.sel_lbl = ttk.Label(ed, text="Nothing selected.", foreground="#8f9eb2")
-            self.sel_lbl.grid(row=0, column=0, columnspan=12, sticky="w")
+            # ---- the bar under the viewport: View / Zoom / Light / Dark scene, and this module's status line
+            b1 = ttk.Frame(bar)
+            b1.pack(fill="x")
+            for lab, var, vals, w, row in (("Light", self.v_light, list(LIGHTS), 24, b1),):
+                ttk.Label(row, text=lab + ":").pack(side="left", padx=(0, 2))
+                c = ttk.Combobox(row, textvariable=var, values=vals, state="readonly", width=w)
+                c.pack(side="left", padx=(0, 8))
+                c.bind("<<ComboboxSelected>>", lambda _e, lab=lab: self.on_combo(lab))
+            ttk.Checkbutton(b1, text="Dark scene", variable=self.v_night, command=self.render).pack(side="left")
+            ws.flow(b1, bar)
+            self.hint = ttk.Label(bar, text="Drag = orbit all the way round, right-drag or Shift-drag = move, wheel = zoom, double-click = fit, "
+                                  "click a lamp = select it. The view buttons above are the page's.", foreground="#8f9eb2", wraplength=420, justify="left")
+            self.hint.pack(fill="x", pady=(3, 0))
+            self.status.bar(bar, ttk, tk, wraplength=420, fill="x", pady=(3, 0))
 
-            def entries(row, label, vars_, names, btn, cmd):
-                ttk.Label(ed, text=label, width=9).grid(row=row, column=0, sticky="w", pady=2)
-                for i, (v, n) in enumerate(zip(vars_, names)):
-                    ttk.Label(ed, text=n).grid(row=row, column=1 + 2 * i, sticky="e", padx=(6, 1))
-                    ttk.Entry(ed, textvariable=v, width=8).grid(row=row, column=2 + 2 * i, sticky="w")
-                ttk.Button(ed, text=btn, command=cmd).grid(row=row, column=8, padx=8, sticky="w")
-            entries(1, "Position", (self.px, self.py, self.pz), ("X", "Y", "Z"), "Set position", self.set_position)
-            entries(2, "Size", (self.sw, self.sh, self.sd), ("W", "H", "D"), "Set size", self.set_size)
-            entries(3, "Turn (deg)", (self.rx, self.ry, self.rz), ("Pitch", "Yaw", "Roll"), "Turn", self.do_turn)
-            nud = ttk.Frame(ed)
-            nud.grid(row=4, column=0, columnspan=12, sticky="w", pady=2)
+            # ---- right: property panels
+            sec = ws.section("Selected lamps")
+            ed = sec.body
+            self.sel_lbl = ttk.Label(ed, text="Nothing selected.", foreground="#8f9eb2", wraplength=340, justify="left")
+            self.sel_lbl.pack(fill="x")
+
+            def entries(label, vars_, names, btn, cmd):
+                row = ttk.Frame(ed)
+                row.pack(fill="x", pady=2)
+                ttk.Label(row, text=label, width=9).pack(side="left")
+                for v, n in zip(vars_, names):
+                    ttk.Label(row, text=n).pack(side="left", padx=(6, 1))
+                    ttk.Entry(row, textvariable=v, width=7).pack(side="left")
+                ttk.Button(row, text=btn, command=cmd).pack(side="left", padx=8)
+                ws.flow(row)
+
+            def line(parent_=None):
+                f = ttk.Frame(parent_ or ed)
+                f.pack(fill="x", pady=2)
+                return f
+            entries("Position", (self.px, self.py, self.pz), ("X", "Y", "Z"), "Set position", self.set_position)
+            entries("Size", (self.sw, self.sh, self.sd), ("W", "H", "D"), "Set size", self.set_size)
+            entries("Turn (deg)", (self.rx, self.ry, self.rz), ("Pitch", "Yaw", "Roll"), "Turn", self.do_turn)
+            nud = line()
             ttk.Label(nud, text="Nudge  step").pack(side="left")
             ttk.Entry(nud, textvariable=self.step, width=6).pack(side="left", padx=4)
+            ws.flow(nud)
+            nud1 = line()
             for t, d in (("◄ X-", (-1, 0, 0)), ("X+ ►", (1, 0, 0)), ("▼ Y-", (0, -1, 0)), ("Y+ ▲", (0, 1, 0)),
                          ("Z- back", (0, 0, -1)), ("Z+ front", (0, 0, 1))):
-                ttk.Button(nud, text=t, width=8, command=lambda d=d: self.nudge(d)).pack(side="left", padx=1)
-            ttk.Checkbutton(nud, text="Edit both sides", variable=self.v_both).pack(side="left", padx=(12, 4))
-            ttk.Checkbutton(nud, text="Also the linked part (tail <-> stop, garage <-> on)",
+                ttk.Button(nud1, text=t, width=8, command=lambda d=d: self.nudge(d)).pack(side="left", padx=1)
+            ws.flow(nud1)
+            nud2 = line()
+            ttk.Checkbutton(nud2, text="Edit both sides", variable=self.v_both).pack(side="left", padx=(0, 4))
+            ttk.Checkbutton(nud2, text="Also the linked part (tail <-> stop, garage <-> on)",
                             variable=self.v_link).pack(side="left", padx=4)
-            ops = ttk.Frame(ed)
-            ops.grid(row=5, column=0, columnspan=12, sticky="w", pady=2)
+            ws.flow(nud2)
+            ops = line()
             for t, f in (("Mirror copy", self.do_mirror), ("Duplicate", self.do_dup), ("Flip left/right", lambda: self.do_flip(0)),
                          ("Flip up/down", lambda: self.do_flip(1)), ("Delete", self.do_delete)):
                 ttk.Button(ops, text=t, command=f).pack(side="left", padx=1)
             ttk.Label(ops, text="   Split at X").pack(side="left")
             ttk.Entry(ops, textvariable=self.cutx, width=6).pack(side="left", padx=3)
             ttk.Button(ops, text="Split", command=self.do_split).pack(side="left")
-
-            col = ttk.Frame(ed)
-            col.grid(row=6, column=0, columnspan=12, sticky="w", pady=2)
+            ws.flow(ops)
+            col = line()
             ttk.Label(col, text="Colour").pack(side="left")
             ttk.Combobox(col, textvariable=self.c_tint, values=["Keep colour"] + list(TINTS), state="readonly", width=12).pack(side="left", padx=4)
             ttk.Label(col, text="Glow %").pack(side="left", padx=(6, 0))
             ttk.Entry(col, textvariable=self.c_strength, width=5).pack(side="left", padx=4)
-            ttk.Checkbutton(col, text="Flat colour (plain, loses the texture's detail; allows any colour)", variable=self.v_flat).pack(side="left", padx=8)
             ttk.Button(col, text="Apply colour", command=self.do_color).pack(side="left", padx=4)
+            ttk.Checkbutton(col, text="Flat colour (plain, loses the texture's detail)", variable=self.v_flat).pack(side="left", padx=8)
+            ws.flow(col)
 
-            ad = ttk.LabelFrame(parent, text="Add a lamp", padding=8)
-            ad.pack(fill="x", padx=12, pady=(4, 2))
-            r0 = ttk.Frame(ad)
-            r0.pack(fill="x")
+            ad = ws.section("Add a lamp", opened=False).body
+            r0 = line(ad)
             ttk.Label(r0, text="Kind").pack(side="left")
             c = ttk.Combobox(r0, textvariable=self.a_role, values=list(ROLES), state="readonly", width=24)
             c.pack(side="left", padx=4)
             c.bind("<<ComboboxSelected>>", lambda _e: self.set_role())
-            ttk.Label(r0, text="  in parts:").pack(side="left")
+            ws.flow(r0)
+            r0b = line(ad)
+            ttk.Label(r0b, text="in parts:").pack(side="left")
             for t in (0x110, 0x111, 0x112, 0x113):
-                ttk.Checkbutton(r0, text="%s %s" % (hex(t), SHORT[t]), variable=self.a_parts[t]).pack(side="left", padx=3)
-            r1 = ttk.Frame(ad)
-            r1.pack(fill="x", pady=3)
+                ttk.Checkbutton(r0b, text="%s %s" % (hex(t), SHORT[t]), variable=self.a_parts[t]).pack(side="left", padx=3)
+            ws.flow(r0b)
+            r1 = line(ad)
             for lab, var, vals, w in (("Facing", self.a_facing, FACINGS, 10), ("Shape", self.a_shape, SHAPES, 10),
                                       ("Colour", self.a_tint, list(TINTS), 10)):
                 ttk.Label(r1, text=lab).pack(side="left", padx=(0, 2))
@@ -1058,16 +1076,16 @@ def build_tab(tab_parent, root, app=None):
             for lab, var in (("Width", self.a_w), ("Height", self.a_h), ("Glow %", self.a_strength)):
                 ttk.Label(r1, text=lab).pack(side="left", padx=(0, 2))
                 ttk.Entry(r1, textvariable=var, width=6).pack(side="left", padx=(0, 8))
-            r2 = ttk.Frame(ad)
-            r2.pack(fill="x", pady=3)
+            ws.flow(r1)
+            r2 = line(ad)
             for lab, var in (("X", self.a_x), ("Y", self.a_y), ("Z", self.a_z)):
                 ttk.Label(r2, text=lab).pack(side="left", padx=(0, 2))
                 ttk.Entry(r2, textvariable=var, width=7).pack(side="left", padx=(0, 8))
             ttk.Checkbutton(r2, text="Snap to body", variable=self.a_snap).pack(side="left", padx=4)
             ttk.Checkbutton(r2, text="Tilt to the surface", variable=self.a_tilt).pack(side="left", padx=4)
             ttk.Button(r2, text="Use the selected lamp's spot", command=self.use_spot).pack(side="left", padx=8)
-            r3 = ttk.Frame(ad)
-            r3.pack(fill="x", pady=3)
+            ws.flow(r2)
+            r3 = line(ad)
             ttk.Label(r3, text="Count").pack(side="left")
             ttk.Entry(r3, textvariable=self.a_count, width=5).pack(side="left", padx=(2, 8))
             ttk.Label(r3, text="Step X Y Z").pack(side="left")
@@ -1075,83 +1093,21 @@ def build_tab(tab_parent, root, app=None):
                 ttk.Entry(r3, textvariable=v, width=6).pack(side="left", padx=2)
             ttk.Checkbutton(r3, text="Both sides (mirror image)", variable=self.a_mirror).pack(side="left", padx=12)
             ttk.Button(r3, text="Add lamp", command=self.do_add).pack(side="left", padx=8)
-            ln = ttk.LabelFrame(parent, text="Lens covers (a solid dark piece over the headlights: turn it into clear glass)", padding=8)
-            ln.pack(fill="x", padx=12, pady=(4, 2))
-            lr = ttk.Frame(ln)
-            lr.pack(fill="x")
+            ws.flow(r3)
+
+            ln = ws.section("Lens covers (dark piece over the headlights to clear glass)", opened=False).body
+            lr = line(ln)
             ttk.Label(lr, text="Black below").pack(side="left")
             ttk.Entry(lr, textvariable=self.l_dark, width=5).pack(side="left", padx=(2, 10))
             ttk.Label(lr, text="Reach x").pack(side="left")
             ttk.Entry(lr, textvariable=self.l_reach, width=5).pack(side="left", padx=(2, 10))
-            ttk.Button(lr, text="Show what would turn to glass", command=self.lens_show).pack(side="left", padx=4)
-            ttk.Button(lr, text="Make it clear glass", command=self.lens_apply).pack(side="left", padx=4)
-            ttk.Button(lr, text="Hide preview", command=self.lens_hide).pack(side="left", padx=4)
-            ttk.Label(ln, textvariable=self.lens_msg, foreground="#c9d4e3", wraplength=900, justify="left").pack(fill="x", pady=(4, 0))
-            self.status.bar(parent, ttk, tk, wraplength=1000, fill="x", padx=12, pady=6)
-
-        # ------------------------------------------------------------ opening / saving
-        def confirm_discard(self):
-            return UI.discard_changes(messagebox, root, "this car", self.dirty)
-
-        def open_dialog(self):
-            if not self.confirm_discard():
-                return
-            d = None
-            try:
-                d = (wpk_view.load_prefs().get("lamps_dir") or wpk_view.load_prefs().get("wpk_dir")) if wpk_view else None
-            except Exception:
-                pass
-            f = filedialog.askopenfilename(parent=root, title="Open a car .wpk", initialdir=d,
-                                           filetypes=[("Car pack", "*.wpk"), ("All files", "*.*")])
-            if f:
-                self.open_path(f)
-
-        def from_models(self):
-            m = getattr(app, "models", None)
-            p = getattr(m, "path", None)
-            if not p or not os.path.isfile(p):
-                messagebox.showinfo("Lamps", "Open a car in the Models tab first.", parent=root)
-                return
-            if self.confirm_discard():
-                self.open_path(p)
-
-        def open_path(self, f):
-            try:
-                self.pack = we.Pack.load(f)
-                self.stock = we.stock_pack_of(f)
-            except Exception as ex:
-                messagebox.showerror("Lamps", "Cannot open %s:\n%s" % (os.path.basename(f), ex), parent=root)
-                return
-            self.path, self.undo, self.dirty, self.texcache = f, [], False, []
-            self.btn_undo.configure(state="disabled")
-            self.name.set(os.path.basename(f))
-            if wpk_view:
-                wpk_view.save_prefs(lamps_dir=os.path.dirname(os.path.abspath(f)))
-            self.refresh()
-            self.status.set("%s: %d lamp pieces." % (os.path.basename(f), len(self.lamps)))
-
-        def save(self):
-            if not self.pack or not self.path:
-                return
-            self.write(self.path)
-
-        def save_as(self):
-            if not self.pack:
-                return
-            f = filedialog.asksaveasfilename(parent=root, defaultextension=".wpk", initialfile=os.path.basename(self.path or "car.wpk"),
-                                             filetypes=[("Car pack", "*.wpk")])
-            if f:
-                self.write(f)
-
-        def write(self, f):
-            try:
-                r = self.pack.save(f)
-            except Exception as ex:
-                messagebox.showerror("Lamps", "Cannot save:\n%s" % ex, parent=root)
-                return
-            self.path, self.dirty = f, False
-            self.name.set(os.path.basename(f))
-            self.status.set("Saved %s%s." % (os.path.basename(f), " (the old file is kept as .bak)" if r.get("bak") else ""))
+            ws.flow(lr)
+            lr2 = line(ln)
+            ttk.Button(lr2, text="Show what would turn to glass", command=self.lens_show).pack(side="left", padx=4)
+            ttk.Button(lr2, text="Make it clear glass", command=self.lens_apply).pack(side="left", padx=4)
+            ttk.Button(lr2, text="Hide preview", command=self.lens_hide).pack(side="left", padx=4)
+            ws.flow(lr2)
+            ttk.Label(ln, textvariable=self.lens_msg, foreground="#c9d4e3", wraplength=340, justify="left").pack(fill="x", pady=(4, 0))
 
         # ------------------------------------------------------------ list
         def refresh(self, keep=None):
@@ -1240,13 +1196,14 @@ def build_tab(tab_parent, root, app=None):
         def edit(self, fn, label, select_new=None):
             """run fn(pack, lamps, partners) on a copy-safe undo point; refresh"""
             if not self.pack:
-                self.status.set("Open a car first.")
+                self.status.set("Open a car in Parts & viewport first.")
                 return
             ls = self.selected()
             if not ls and select_new is None:
                 self.status.set("Select a lamp first.")
                 return
             snap = snapshot(self.pack)
+            host.snapshot()                                     # the page's one Undo point (taken before anything changes)
             keys = [l.key for l in ls]
             pa0 = self.partners(ls) if self.v_both.get() else []
             try:
@@ -1257,12 +1214,12 @@ def build_tab(tab_parent, root, app=None):
                 res = fn(self.pack, ls + lk, pa0 + lkp)
             except (LampError, we.EditError) as ex:
                 restore(self.pack, snap)
+                if host.undo:
+                    host.undo.pop()
                 self.refresh(keys)
                 messagebox.showwarning("Lamps", str(ex), parent=root)
                 return
-            self.undo.append(snap)
-            self.btn_undo.configure(state="normal")
-            self.dirty = True
+            self.committed("Lamps: " + label)
             self.refresh(res if res is not None else keys)
             self.status.set(label + (" (and %d linked piece(s) in the other part)" % (len(lk) + len(lkp)) if (lk or lkp) else ""))
 
@@ -1374,13 +1331,19 @@ def build_tab(tab_parent, root, app=None):
                 return split_at(p, ls[0], 0, x)
             self.edit(fn, "Split at X = %.2f (the two halves are now separate lamps)." % x)
 
+        def committed(self, msg):
+            """the car was changed by this module: the page redraws, marks the car changed and refreshes Parts' own list"""
+            self._mine = True
+            try:
+                host.edited(msg)
+            finally:
+                self._mine = False
+
         def do_undo(self):
-            if not self.undo:
+            if not host.undo:
+                self.status.set("Nothing to undo.")
                 return
-            restore(self.pack, self.undo.pop())
-            self.btn_undo.configure(state="normal" if self.undo else "disabled")
-            self.dirty = True
-            self.refresh([])
+            host.do_undo()                                      # the page's Undo; it tells this module through pack_changed
             self.status.set("Undone.")
 
         # ------------------------------------------------------------ adding
@@ -1470,7 +1433,7 @@ def build_tab(tab_parent, root, app=None):
 
         def lens_show(self):
             if not self.pack:
-                self.status.set("Open a car first.")
+                self.status.set("Open a car in Parts & viewport first.")
                 return
             try:
                 dark, reach = self.lens_params()
@@ -1489,7 +1452,7 @@ def build_tab(tab_parent, root, app=None):
 
         def lens_apply(self):
             if not self.pack:
-                self.status.set("Open a car first.")
+                self.status.set("Open a car in Parts & viewport first.")
                 return
             try:
                 dark, reach = self.lens_params()
@@ -1497,23 +1460,24 @@ def build_tab(tab_parent, root, app=None):
                 self.status.set(str(ex), "error")
                 return
             snap = snapshot(self.pack)
+            host.snapshot()
             try:
                 rep = we.fix_headlights(self.pack, dark=dark, reach=reach)
             except (LampError, we.EditError) as ex:
                 restore(self.pack, snap)
+                if host.undo:
+                    host.undo.pop()
                 messagebox.showwarning("Lamps", str(ex), parent=root)
                 return
             self.lens_dry = None
-            self.undo.append(snap)
-            self.btn_undo.configure(state="normal")
-            self.dirty = True
+            self.committed("Lamps: lens covers made clear")
             self.lens_msg.set(" ".join(rep["notes"]))
             self.refresh([])
             self.status.set("Lens covers done: %d triangles became clear glass." % rep["covers"])
 
         def copy_kits(self):
             if not self.pack or not self.path:
-                self.status.set("Open a car first.")
+                self.status.set("Open a car in Parts & viewport first.")
                 return
             sib = sibling_kits(self.path)
             warn = ("Only the lamp parts (0x110-0x113) of the other pack are replaced by the ones in this window; the old files are kept as .bak.\n"
@@ -1544,135 +1508,171 @@ def build_tab(tab_parent, root, app=None):
             self.status.set("Lamps copied to %d pack(s)%s." % (len(done), "; %d failed" % len(bad) if bad else ""))
             messagebox.showinfo("Copy lamps", ("Done: %s" % ", ".join(done) if done else "Nothing copied.") + ("\n\nFailed:\n" + "\n".join(bad) if bad else ""), parent=root)
 
-        # ------------------------------------------------------------ preview
+        # ------------------------------------------------------------ the shared viewport
+        def on_enter(self):
+            """this module came to the front: attach the overlay, look at the lamps"""
+            self.active = True
+            gl = self.gl
+            if gl is None:
+                self.status.set("Lamps are drawn in the GPU viewport: switch it on in Parts & viewport (GPU viewport).", "warning")
+            else:
+                self.ensure_layer()
+            self.refresh()
+            self.render()
+
+        def on_leave(self):
+            self.active = False
+            self.drop_layer()
+
+        def pack_changed(self, kind):
+            """the page opened a different car, or the car was edited / undone from somewhere else"""
+            if self._mine:
+                return
+            if kind == "open":
+                self._auto_side = None
+                self.lens_dry = None
+            if self.pack:
+                self.refresh()
+                self.status.set("%s: %d lamp pieces." % (os.path.basename(self.path or "car"), len(self.lamps))) if kind == "open" else None
+            else:
+                self.lamps = []
+                self.fill()
+
+        def ensure_layer(self):
+            gl = self.gl
+            if gl is None or GLV is None:
+                return
+            if self.layer is None:
+                self.layer = GLV.TriLayer()
+            if self.layer not in gl.extras:
+                gl.extras.append(self.layer)
+
+        def drop_layer(self):
+            gl = self.gl
+            if gl is not None and self.layer in gl.extras:
+                gl.extras.remove(self.layer)
+            if self.layer is not None:
+                self.layer.clear()
+
+        # what the page's viewport shows while this module is in front
+        def shown_tags(self, base):
+            return self.visible_tags()
+
+        def selection_tags(self):
+            return []                                           # the blue overlay marks the lamps; no whole-part outline
+
+        def viewport_changed(self):
+            """called by the page each time it has set the model / visibility: add this module's look, framing and overlay"""
+            gl = self.gl
+            if gl is None or not self.active or not self.pack:
+                return
+            self.ensure_layer()
+            night = self.v_night.get()
+            gl.set_look("Game: Tokyo, night" if night else GLV.DEFAULT_SHADING)
+            gl.set_background(*((((0.05, 0.06, 0.09), (0.02, 0.025, 0.04))) if night else ((0.24, 0.29, 0.36), (0.09, 0.115, 0.15))))
+            ls = self.selected()
+            self.layer.set_triangles(self.overlay_triangles(ls))
+
+        def render(self):
+            if self.pack:
+                host.render(reuse=True)
+
+        def on_combo(self, which):
+            """View / Light / Zoom changed: View turns the camera, the others only re-frame or re-light"""
+            self.render()
+
+        def fit_view(self):
+            if self.cam is not None:
+                self.cam.fit()
+                self.render()
+
+        def overlay_triangles(self, ls):
+            """the selected lamps (blue) and the lens candidates (pink) as see-through triangles, x y z r g b a per vertex"""
+            groups = []
+            if ls:
+                groups.append(((0.0, 0.59, 1.0, 0.62), [(l.tag, l.bi, np.asarray(l.rows)) for l in ls]))
+            if self.lens_dry and self.pack.chunk(0):
+                groups.append(((1.0, 0.0, 0.75, 0.62), [(0, bi, np.asarray(rows)) for bi, rows in self.lens_dry.items()
+                                                          if bi < len(self.pack.chunk(0).batches)]))
+            out = []
+            for col, items in groups:
+                for tag, bi, rows in items:
+                    ch = self.pack.chunk(tag)
+                    if ch is None or bi >= len(ch.batches) or not len(rows):
+                        continue
+                    b = ch.batches[bi]
+                    T = b.I.reshape(-1, 3).astype(np.int64)[rows]
+                    P = np.asarray(b.V["pos"], np.float32)[T.reshape(-1)]
+                    out.append(np.hstack([P, np.tile(np.asarray(col, np.float32), (len(P), 1))]))
+            return np.vstack(out) if out else np.zeros((0, 7), np.float32)
+
+        def vp_press(self, e):
+            self._drag = dict(x=e.x, y=e.y, x0=e.x, y0=e.y, moved=False, btn=1)
+
+        def vp_press_pan(self, e):
+            self._drag = dict(x=e.x, y=e.y, x0=e.x, y0=e.y, moved=False, btn=2)
+
+        def vp_motion(self, e):
+            d = self._drag
+            if not d or self.gl is None:
+                return
+            if d["btn"] == 1:
+                if not d["moved"] and abs(e.x - d["x0"]) + abs(e.y - d["y0"]) < 4:
+                    return
+                d["moved"] = True
+                self.cam.orbit(e.x - d["x"], e.y - d["y"])           # nothing stops the orbit: a full turn on both axes
+            else:
+                d["moved"] = True
+                self.cam.pan_px(e.x - d["x"], e.y - d["y"], self.gl.upp)
+            d["x"], d["y"] = e.x, e.y
+            self.gl.request_draw()
+
+        def vp_release(self, e):
+            d, self._drag = self._drag, None
+            if d and not d["moved"] and d["btn"] == 1:
+                self.pick_lamp(e.x, e.y)
+
+        def vp_wheel(self, e):
+            if self.gl is not None:
+                up = getattr(e, "num", 0) == 4 or getattr(e, "delta", 0) > 0
+                self.cam.zoom_by(1.2 if up else 1 / 1.2)
+                self.gl.request_draw()
+            return "break"                                           # the page's scroll bar must not move with the wheel
+
+        def pick_lamp(self, x, y):
+            """a click on a lamp piece selects it: the part under the pointer, then the piece of it whose middle is nearest"""
+            tag = self.gl.pick(x, y)
+            if tag is None or not is_lamp_tag(tag) and tag not in HIGH_BRAKE and tag != 0:
+                return
+            cand = [(i, l) for i, l in enumerate(self.lamps) if l.tag == tag and self.tree.exists(str(i))]
+            last = getattr(getattr(self.gl, "r", None), "last", None)
+            if not cand:
+                return
+            best = cand[0][0]
+            if last:
+                view, bd = last[1], None
+                for i, l in cand:
+                    px, py = view.project(l.center)
+                    dd = (px - x) ** 2 + (py - y) ** 2
+                    if bd is None or dd < bd:
+                        best, bd = i, dd
+            self.tree.selection_set([str(best)])
+            self.tree.see(str(best))
+
+        # ------------------------------------------------------------ what is drawn
         def visible_tags(self):
-            hide = wpk_view.hidden_tags(c.tag for c in self.pack.chunks) if wpk_view else set()
+            """parts of the car drawn in this module: everything Parts shows (hidden parts stay hidden), the lamp parts by the Light box"""
+            hide = host.hidden
             mode = self.v_light.get()
             out = set()
             for c in self.pack.chunks:
                 t = c.tag
-                if t == we.WPK_SHADOW or t in hide:
+                if t == we.WPK_SHADOW or t in hide and not is_lamp_tag(t):
                     continue
                 if is_lamp_tag(t) and mode != "All lamp parts" and not we.light_shown(t, mode):
                     continue
                 out.add(t)
             return out
-
-        def model(self):
-            p = self.pack
-            for i, t in enumerate(p.tex):                                   # decode each texture once
-                if i >= len(self.texcache) or self.texcache[i][0] != t["name"]:
-                    ent = (t["name"], p.decode_tex(i, self.stock))
-                    if i >= len(self.texcache):
-                        self.texcache.append(ent)
-                    else:
-                        self.texcache[i] = ent
-            del self.texcache[len(p.tex):]
-            nt = len(p.tex)
-            chunks, batches = [], []
-            for c in p.chunks:
-                chunks.append(tuple(c.lo) + tuple(c.hi) + (len(batches), len(c.batches), c.tag))
-                for b in c.batches:
-                    batches.append(dict(tex=b.tex, flags=b.flags, V=b.V, I=b.I.reshape(-1, 3), prog=b.prog,
-                                        env=b.env if b.env < nt else 0xFFFF, spec=b.spec if b.spec < nt else 0xFFFF, power=b.power / 10000.0))
-            return list(self.texcache), chunks, batches
-
-        def render(self):
-            if not self.pack or not wpk_view:
-                return
-            self.gen += 1
-            if self.busy:
-                self.again = True
-                return
-            self.start(self.gen)
-
-        def start(self, gen):
-            ls = self.selected()
-            vname = self.v_view.get()
-            if VIEWS.get(vname) is None:
-                mz = np.mean([l.center[2] for l in ls]) if ls else -1.0
-                if not ls and self.lens_dry and self.pack.chunk(0):
-                    bb = self.pack.chunk(0).batches
-                    zs = np.concatenate([bb[bi].V["pos"][np.unique(bb[bi].I.reshape(-1, 3)[r])][:, 2] for bi, r in self.lens_dry.items() if bi < len(bb)])
-                    mz = float(np.sum(zs > 0) - np.sum(zs <= 0))
-                yaw, pit = (-35, 14) if mz > 0 else (145, 16)
-                if ls and len(ls) and np.mean([l.center[2] for l in ls]) > 0:
-                    yaw, pit = (0, 0) if self.v_zoom.get() != "Whole car" else (-35, 14)
-                elif ls:
-                    yaw, pit = (180, 0) if self.v_zoom.get() != "Whole car" else (145, 16)
-            else:
-                yaw, pit = VIEWS[vname]
-            try:
-                tex, chunks, batches = self.model()
-            except Exception as ex:
-                self.status.set("Cannot draw: %s" % ex)
-                return
-            show = self.visible_tags()
-            vis = [c for c in chunks if c[8] in show]
-            frame = [c for c in chunks if c[8] != we.WPK_SHADOW]
-            win = None
-            if ls and self.v_zoom.get() != "Whole car":
-                lo, hi = np.min([l.lo for l in ls], 0), np.max([l.hi for l in ls], 0)
-                cx, cy = wpk_view.view_point((lo + hi) / 2, yaw, pit)
-                win = (cx, cy, max(float(np.max(hi - lo)) * 0.9 + 2.5, 3.0))
-            # overlays: the same triangles again in a colour, a hair in front: blue = selected lamps, pink = lens candidates
-            groups = []
-            if ls:
-                groups.append(((0, 150, 255), [(l.tag, l.bi, l.rows, l.lo, l.hi) for l in ls]))
-            if self.lens_dry and self.pack.chunk(0):
-                body = self.pack.chunk(0)
-                gl = []
-                for bi, rows in self.lens_dry.items():
-                    if bi < len(body.batches):
-                        gl.append((0, bi, np.asarray(rows), body.lo, body.hi))
-                groups.append(((255, 0, 190), gl))
-            if groups:
-                eps = wpk_view.view_dir(yaw, pit) * 0.03
-                tex = list(tex)
-                vis = list(vis)
-                for colour, items in groups:
-                    tex.append(("overlay", np.dstack([np.full((4, 4), v, np.uint8) for v in (*colour, 255)])))
-                    for tag, bi, rows, lo, hi in items:
-                        b = self.pack.chunk(tag).batches[bi]
-                        T = b.I.reshape(-1, 3).astype(np.int64)[rows]
-                        used, inv = np.unique(T, return_inverse=True)
-                        V = b.V[used].copy()
-                        V["pos"] = V["pos"] + eps.astype(np.float32)
-                        batches.append(dict(tex=len(tex) - 1, flags=2, V=V, I=inv.reshape(-1, 3), prog=0, env=0xFFFF, spec=0xFFFF, power=0.0))
-                        vis.append(tuple(lo) + tuple(hi) + (len(batches) - 1, 1, 0x7777))
-            W, H = W_, H_
-            self.busy = True
-            night = self.v_night.get()
-
-            def work():
-                try:
-                    g = wpk_view.rasterize((tex, vis, batches), yaw, pit, W, H, frame=frame, window=win)
-                    im = wpk_view.compose(g, tex, {}, "Soft", 1.0, night, True, True)
-                    self.q.put((gen, "img", im))
-                except Exception as ex:
-                    self.q.put((gen, "err", str(ex)))
-            threading.Thread(target=work, daemon=True).start()
-
-        def pump(self):
-            try:
-                while True:
-                    gen, kind, val = self.q.get_nowait()
-                    self.busy = False
-                    if kind == "img":
-                        self.last_image = val
-                        self.photo = ImageTk.PhotoImage(val)
-                        self.canvas.configure(image=self.photo)
-                    else:
-                        self.status.set("Cannot draw: %s" % val)
-                    if self.again or gen != self.gen:
-                        self.again = False
-                        self.start(self.gen)
-            except queue.Empty:
-                pass
-            try:
-                parent.after(80, self.pump)
-            except tk.TclError:
-                pass
 
     return Tab()
 

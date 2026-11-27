@@ -103,7 +103,7 @@ class FitWindow:
         ttk.Label(bar, text="Art").pack(side="left", padx=(10, 2))
         sc = ttk.Scale(bar, from_=0.15, to=1.0, variable=self.v_art, length=90, command=lambda _v: self.refresh())
         sc.pack(side="left")
-        self.cv = tk.Canvas(self.top, width=self.S, height=self.S, highlightthickness=0, background="#444")
+        self.cv = tk.Canvas(self.top, width=self.S, height=self.S, highlightthickness=0, background="#141b26")
         self.cv.pack()
         self.cv.bind("<ButtonPress-1>", self.press)
         self.cv.bind("<B1-Motion>", self.move)

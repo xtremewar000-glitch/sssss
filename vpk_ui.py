@@ -1,5 +1,5 @@
-"""Shared UI pieces for every tab (Milestone 6): palette, ttk theme, confirmation wording, keyboard-shortcut table,
-panel-layout and window-geometry rules.
+"""Shared UI pieces for every tab: the dark design system, ttk/Tk theme, confirmation wording,
+keyboard-shortcut table, panel-layout and window-geometry rules.
 
 Everything except apply_theme() / install_shortcuts() is plain Python (no tkinter import) and is unit-tested without a display.
 Nothing here touches WPK data or any file format.
@@ -156,8 +156,9 @@ class StatusLine:
 
     def bar(self, parent, ttk, tk, wraplength=0, **pack):
         """a Frame holding the coloured message and, while loading, a small busy bar; packed with **pack (default left / fill x)"""
-        f = ttk.Frame(parent)
-        lbl = ttk.Label(f, text=self.shown(), foreground=state_style(self.level)[0], wraplength=wraplength, justify="left")
+        f = ttk.Frame(parent, style="VPK.Status.TFrame")
+        lbl = ttk.Label(f, text=self.shown(), foreground=state_style(self.level)[0], wraplength=wraplength,
+                        justify="left", style="VPK.Status.TLabel")
         lbl.pack(side="left", fill="x", expand=True)
         pb = ttk.Progressbar(f, mode="indeterminate", length=90)
 
@@ -393,36 +394,65 @@ def apply_theme(root, ttk, tk):
     except tk.TclError:
         pass
     cfg("TFrame", background=BG)
-    cfg("TLabel", background=BG, foreground=TEXT)
-    cfg("TButton", background=RAISED, foreground=TEXT, bordercolor=BORDER, padding=(10, 6), focuscolor="#8ecbff")
+    cfg("TLabel", background=BG, foreground=TEXT, padding=0)
+    cfg("TButton", background=RAISED, foreground=TEXT, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
+        borderwidth=1, relief="flat", padding=(12, 7), focuscolor="#8ecbff", font=("TkDefaultFont", 9))
     mp("TButton", background=[("active", "#2c3c50"), ("disabled", "#171e29")], foreground=[("disabled", "#718096")])
     # button hierarchy: Primary (the one main action of a page), default (secondary), Danger (deletes / overwrites)
-    cfg("VPK.Primary.TButton", background=ACCENT, foreground="#ffffff", bordercolor=ACCENT, padding=(12, 6))
+    cfg("VPK.Primary.TButton", background=ACCENT, foreground="#ffffff", bordercolor=ACCENT,
+        lightcolor=ACCENT, darkcolor=ACCENT, borderwidth=1, relief="flat", padding=(13, 7))
     mp("VPK.Primary.TButton", background=[("active", "#388bfd"), ("disabled", "#17243a")], foreground=[("disabled", "#718096")])
-    cfg("VPK.Danger.TButton", background=DANGER_BG, foreground="#ffffff", bordercolor="#a03a3a", padding=(10, 6))
+    cfg("VPK.Danger.TButton", background=DANGER_BG, foreground="#ffffff", bordercolor="#a03a3a",
+        lightcolor="#a03a3a", darkcolor="#a03a3a", borderwidth=1, relief="flat", padding=(11, 7))
     mp("VPK.Danger.TButton", background=[("active", "#a03a3a"), ("disabled", "#2a1c1f")], foreground=[("disabled", "#718096")])
-    cfg("VPK.Nav.TButton", background="#111925", foreground="#a9b7c9", anchor="w", padding=(14, 10), borderwidth=0)
-    mp("VPK.Nav.TButton", background=[("active", "#1c2c3e")], foreground=[("active", "#ffffff")])
-    cfg("VPK.NavActive.TButton", background="#1d3b54", foreground="#ffffff", anchor="w", padding=(14, 10), borderwidth=0,
-        font=("TkDefaultFont", 9, "bold"))
-    mp("VPK.NavActive.TButton", background=[("active", "#254b69")])
-    cfg("Toolbutton", background=RAISED, foreground=TEXT_SOFT, bordercolor=BORDER, padding=(6, 4), focuscolor="#8ecbff")
+    cfg("VPK.Nav.TButton", background="#0f1723", foreground="#a9b7c9", anchor="w", padding=(15, 11),
+        borderwidth=0, font=("TkDefaultFont", 9))
+    mp("VPK.Nav.TButton", background=[("active", "#1c2c3e"), ("pressed", "#1d3b54")],
+       foreground=[("active", "#ffffff")])
+    cfg("VPK.NavActive.TButton", background="#1d3b54", foreground="#ffffff", anchor="w", padding=(15, 11),
+        borderwidth=0, font=("TkDefaultFont", 9, "bold"), relief="flat")
+    mp("VPK.NavActive.TButton", background=[("active", "#254b69"), ("pressed", "#254b69")])
+    # Shared visual language for page chrome, section headings and compact metadata.
+    cfg("VPK.Header.TFrame", background="#101925")
+    cfg("VPK.Rail.TFrame", background="#0f151f")
+    cfg("VPK.Page.TFrame", background=BG)
+    cfg("VPK.Footer.TFrame", background="#101925")
+    cfg("VPK.Title.TLabel", background=BG, foreground=TEXT, font=("TkDefaultFont", 13, "bold"))
+    cfg("VPK.Kicker.TLabel", background=BG, foreground=MUTED, font=("TkDefaultFont", 8, "bold"))
+    cfg("VPK.Subtle.TLabel", background=BG, foreground=MUTED)
+    cfg("VPK.Status.TFrame", background="#101925")
+    cfg("VPK.Status.TLabel", background="#101925", foreground=TEXT_SOFT, padding=(8, 3))
+    cfg("VPK.Card.TLabelframe", background=PANEL, bordercolor=BORDER, relief="solid", borderwidth=1, padding=8)
+    cfg("VPK.Card.TLabelframe.Label", background=PANEL, foreground="#8ecbff", font=("TkDefaultFont", 9, "bold"))
+    cfg("Toolbutton", background=RAISED, foreground=TEXT_SOFT, bordercolor=BORDER, lightcolor=BORDER,
+        darkcolor=BORDER, borderwidth=1, relief="flat", padding=(7, 5), focuscolor="#8ecbff")
     mp("Toolbutton", background=[("selected", SELECT), ("active", "#2c3c50"), ("disabled", "#171e29")],
        foreground=[("selected", "#ffffff"), ("disabled", "#718096")])
-    cfg("TNotebook", background=BG, borderwidth=0)
-    cfg("TNotebook.Tab", background="#182230", foreground="#a9b7c9", padding=(14, 8))
+    cfg("TNotebook", background=BG, borderwidth=0, tabmargins=(4, 4, 4, 0))
+    cfg("TNotebook.Tab", background="#182230", foreground="#a9b7c9", padding=(16, 9), font=("TkDefaultFont", 9))
     mp("TNotebook.Tab", background=[("selected", "#1d3b54"), ("active", "#26384d")], foreground=[("selected", "#ffffff")])
     cfg("TLabelframe", background=PANEL, bordercolor=BORDER)
     cfg("TLabelframe.Label", background=PANEL, foreground="#8ecbff")
-    cfg("Treeview", background="#151e2a", fieldbackground="#151e2a", foreground=TEXT, rowheight=25, bordercolor=BORDER)
-    cfg("Treeview.Heading", background=RAISED, foreground="#dce6f2", padding=6)
+    cfg("Treeview", background="#151e2a", fieldbackground="#151e2a", foreground=TEXT, rowheight=28,
+        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, font=("TkDefaultFont", 9))
+    cfg("Treeview.Heading", background=RAISED, foreground="#dce6f2", bordercolor=BORDER,
+        lightcolor=BORDER, darkcolor=BORDER, relief="flat", padding=(8, 7),
+        font=("TkDefaultFont", 9, "bold"))
     mp("Treeview", background=[("selected", SELECT)], foreground=[("selected", "#ffffff")])
-    cfg("TCombobox", fieldbackground=INPUT, background=RAISED, foreground=TEXT, arrowcolor="#8ecbff", padding=5)
+    cfg("TCombobox", fieldbackground=INPUT, background=RAISED, foreground=TEXT, arrowcolor="#8ecbff",
+        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=6, relief="flat")
     mp("TCombobox", fieldbackground=[("readonly", INPUT), ("disabled", "#111925")], foreground=[("disabled", "#718096")])
-    cfg("TEntry", fieldbackground=INPUT, foreground=TEXT, padding=5)
+    cfg("TEntry", fieldbackground=INPUT, foreground=TEXT, bordercolor=BORDER, lightcolor=BORDER,
+        darkcolor=BORDER, padding=6, relief="flat")
     mp("TEntry", fieldbackground=[("disabled", "#111925")], foreground=[("disabled", "#718096")])
-    cfg("TSpinbox", fieldbackground=INPUT, foreground=TEXT, background=RAISED, arrowcolor="#8ecbff", padding=4)
-    cfg("TScrollbar", background=RAISED, troughcolor="#111925", bordercolor="#111925", arrowcolor="#8ea3ba")
+    cfg("TSpinbox", fieldbackground=INPUT, foreground=TEXT, background=RAISED, arrowcolor="#8ecbff",
+        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, padding=5, relief="flat")
+    scrollbar_style = dict(background=RAISED, troughcolor="#111925", bordercolor="#111925",
+                           lightcolor="#26364a", darkcolor="#26364a", arrowcolor="#8ea3ba",
+                           relief="flat", arrowsize=13, gripcount=0)
+    cfg("TScrollbar", **scrollbar_style)
+    cfg("Vertical.TScrollbar", **scrollbar_style)
+    cfg("Horizontal.TScrollbar", **scrollbar_style)
     cfg("TCheckbutton", background=BG, foreground="#dce6f2")
     cfg("TRadiobutton", background=BG, foreground="#dce6f2")
     mp("TCheckbutton", foreground=[("disabled", "#718096")])
@@ -432,9 +462,42 @@ def apply_theme(root, ttk, tk):
     cfg("Sash", sashthickness=6, gripcount=0, background=BORDER)
     cfg("TProgressbar", background=ACCENT, troughcolor="#111925", bordercolor=BORDER)
     cfg("TScale", background=BG, troughcolor="#111925")
-    cfg("TMenubutton", background=RAISED, foreground=TEXT, bordercolor=BORDER, padding=(8, 5))
+    cfg("TMenubutton", background=RAISED, foreground=TEXT, bordercolor=BORDER, lightcolor=BORDER,
+        darkcolor=BORDER, relief="flat", padding=(9, 6))
     # plain tk widgets that ttk does not style: dialogs and the lists inside comboboxes
     opt("*Toplevel.background", BG)
+    # Classic Tk widgets are still used for canvases, editors, text logs and native menus.
+    # Set their defaults before any page/dialog is built so no utility window falls back to white.
+    for pattern, value in (
+        ("*Frame.background", BG), ("*Label.background", BG), ("*Label.foreground", TEXT),
+        ("*Button.background", RAISED), ("*Button.foreground", TEXT),
+        ("*Button.activeBackground", "#2c3c50"), ("*Button.activeForeground", "#ffffff"),
+        ("*Button.relief", "flat"), ("*Button.borderWidth", 1),
+        ("*Button.highlightBackground", BORDER), ("*Button.highlightColor", ACCENT),
+        ("*Entry.background", INPUT), ("*Entry.foreground", TEXT), ("*Entry.insertBackground", TEXT),
+        ("*Entry.selectBackground", SELECT), ("*Entry.selectForeground", "#ffffff"),
+        ("*Entry.highlightBackground", BORDER), ("*Entry.highlightColor", ACCENT),
+        ("*Entry.relief", "flat"), ("*Entry.borderWidth", 1),
+        ("*Text.background", PANEL), ("*Text.foreground", TEXT), ("*Text.insertBackground", TEXT),
+        ("*Text.selectBackground", SELECT), ("*Text.selectForeground", "#ffffff"),
+        ("*Text.highlightBackground", BORDER), ("*Text.highlightColor", ACCENT),
+        ("*Text.relief", "flat"), ("*Text.borderWidth", 1), ("*Text.padX", 8), ("*Text.padY", 7),
+        ("*Listbox.background", PANEL), ("*Listbox.foreground", TEXT),
+        ("*Listbox.selectBackground", SELECT), ("*Listbox.selectForeground", "#ffffff"),
+        ("*Listbox.highlightBackground", BORDER), ("*Listbox.highlightColor", ACCENT),
+        ("*Menu.background", "#111925"), ("*Menu.foreground", TEXT),
+        ("*Menu.activeBackground", SELECT), ("*Menu.activeForeground", "#ffffff"),
+        ("*Menu.disabledForeground", MUTED), ("*Menu.borderWidth", 0), ("*Menu.relief", "flat"),
+        ("*Canvas.background", BG), ("*Canvas.highlightBackground", BORDER), ("*Canvas.highlightColor", ACCENT),
+        ("*Labelframe.background", PANEL), ("*Labelframe.foreground", TEXT),
+        ("*Labelframe.labelForeground", "#8ecbff"),
+        ("*Scrollbar.background", RAISED), ("*Scrollbar.troughColor", "#111925"),
+        ("*Checkbutton.background", BG), ("*Checkbutton.foreground", TEXT), ("*Checkbutton.selectColor", INPUT),
+        ("*Radiobutton.background", BG), ("*Radiobutton.foreground", TEXT), ("*Radiobutton.selectColor", INPUT),
+        ("*Scale.background", BG), ("*Scale.troughColor", "#111925"),
+        ("*Spinbox.background", INPUT), ("*Spinbox.foreground", TEXT), ("*Spinbox.insertBackground", TEXT),
+    ):
+        opt(pattern, value)
     opt("*TCombobox*Listbox.background", INPUT)
     opt("*TCombobox*Listbox.foreground", TEXT)
     opt("*TCombobox*Listbox.selectBackground", SELECT)
@@ -455,3 +518,70 @@ def install_dialog_minsize(root, tk):
         except (tk.TclError, AttributeError):
             pass
     root.bind_class("Toplevel", "<Map>", on_map, add="+")
+
+
+# ------------------------------------------------------------------------------------------------
+# UI size: fit the pages to the window (no sideways scrolling) and let the user pick a size
+# ------------------------------------------------------------------------------------------------
+SCALE_STEPS = (1.0, 0.94, 0.88, 0.82, 0.76, 0.70, 0.64)          # tried in this order by "fit to window"
+MANUAL_SCALES = (0.7, 0.8, 0.9, 1.0, 1.1, 1.25)
+NAMED_FONTS = ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont",
+               "TkTooltipFont", "TkFixedFont")
+FIT_PROBES = []                    # callables -> (width the page needs, width the window gives it, shown): one per scrollable page
+
+
+def worst_overflow(probes=None):
+    """how many pixels the widest shown page is wider than the window gives it (<= 0: everything fits); None when no page is shown"""
+    worst = None
+    for probe in (FIT_PROBES if probes is None else probes):
+        try:
+            need, have, shown = probe()
+            if not shown or have < 50:
+                continue
+            over = int(need) - int(have)
+        except Exception:                                   # a page that is gone, or a widget without sizes
+            continue
+        worst = over if worst is None else max(worst, over)
+    return worst
+
+
+def pick_scale(steps, overflow_at, tolerance=2):
+    """the biggest step at which nothing overflows: overflow_at(step) applies the step and returns worst_overflow().
+    Falls back to the smallest step; None when there is nothing to measure (no page shown)."""
+    last = None
+    for st in steps:
+        over = overflow_at(st)
+        if over is None:
+            return None
+        last = st
+        if over <= tolerance:
+            return st
+    return last
+
+
+class UIScale:
+    """scales Tk's named fonts (every widget that has no font of its own follows them) from the sizes they had at start"""
+
+    def __init__(self, tkfont, root):
+        self.base = {}
+        for n in NAMED_FONTS:
+            try:
+                f = tkfont.nametofont(n, root=root)
+                self.base[n] = (f, int(f.cget("size")))
+            except Exception:
+                continue
+        self.current = 1.0
+
+    def apply(self, scale):
+        scale = max(0.5, min(2.0, float(scale)))
+        if scale == self.current:                       # already this size: touching the fonts again re-lays out every widget for nothing
+            return scale
+        for f, b in self.base.values():
+            mag = max(6, int(round(abs(b) * scale))) if b else 0
+            try:
+                f.configure(size=mag if b > 0 else -max(8, int(round(abs(b) * scale))))
+            except Exception:
+                pass
+        self.current = scale
+        return scale
+

@@ -214,6 +214,45 @@ void main() {
 """
 
 
+
+VS_FLAME = """#version 330 core
+in vec3 aPos; in vec2 aUV; in vec4 aColor;
+uniform mat4 uMVP;
+out vec2 vUV; out vec4 vColor;
+void main() { gl_Position = uMVP * vec4(aPos, 1.0); vUV = aUV; vColor = aColor; }
+"""
+
+FS_FLAME = """#version 330 core
+uniform sampler2D uTex;
+uniform float uGain;
+in vec2 vUV; in vec4 vColor; out vec4 oColor;
+void main() { vec4 c = texture(uTex, vUV) * vColor; c.rgb *= uGain; oColor = c; }
+"""
+
+VS_FLAT = """#version 330 core
+in vec3 aPos; in vec3 aCol;
+uniform mat4 uMVP;
+out vec3 vCol;
+void main() { gl_Position = uMVP * vec4(aPos, 1.0); vCol = aCol; }
+"""
+
+FS_FLAT = """#version 330 core
+in vec3 vCol; out vec4 oColor;
+void main() { oColor = vec4(vCol, 1.0); }
+"""
+
+VS_TRI = """#version 330 core
+in vec3 aPos; in vec4 aCol;
+uniform mat4 uMVP; uniform float uBias;
+out vec4 vCol;
+void main() { vec4 p = uMVP * vec4(aPos, 1.0); p.z -= uBias * p.w; gl_Position = p; vCol = aCol; }
+"""
+
+FS_TRI = """#version 330 core
+in vec4 vCol; out vec4 oColor;
+void main() { oColor = vCol; }
+"""
+
 # ------------------------------------------------------------------------------------------------
 # camera maths (numpy).  Same turn as wpk_view.view_point: q = Rx(pitch) Ry(yaw) p, x right, y up, z towards the viewer.
 # ------------------------------------------------------------------------------------------------
@@ -443,6 +482,212 @@ class GPUModel:
         self.gl_tex, self.ao_tex = {}, {}
 
 
+class FlameLayer:
+    """Extra things drawn on top of the car in the car's own space (the Backfire tab): flame meshes placed by 4x4 matrices, and small
+    axis crosses that mark the exhaust outlets.  Plain numpy in, GPU buffers made lazily on the renderer's context.
+        set_assets(meshes, textures)   meshes {key: dict(V (VDT array), I (u16), tex index, blend)}, textures [RGBA uint8 array]
+        update_mesh(key, V)            the same mesh with other vertices (a slider moved)
+        instances = [(key, 4x4 model matrix)]     markers = [((x, y, z), size, (r, g, b))]
+    Use it as a callable: renderer.extras.append(layer)."""
+
+    def __init__(self):
+        self.meshes, self.textures = {}, []
+        self.instances, self.markers = [], []
+        self.gain = 1.0
+        self.enabled = True
+        self._ctx = None
+        self._gpu = {}                 # key -> (vbo, ibo, vao)
+        self._tex = {}                 # texture index -> moderngl texture
+        self._progs = None
+        self._dirty = set()
+        self._all_dirty = True
+
+    def set_assets(self, meshes, textures):
+        self.meshes, self.textures = dict(meshes), list(textures)
+        self._all_dirty = True
+
+    def update_mesh(self, key, V):
+        if key in self.meshes:
+            self.meshes[key]["V"] = V
+            self._dirty.add(key)
+
+    def release(self):
+        for vbo, ibo, vao in self._gpu.values():
+            for o in (vao, vbo, ibo):
+                try:
+                    o.release()
+                except Exception:
+                    pass
+        for t in self._tex.values():
+            try:
+                t.release()
+            except Exception:
+                pass
+        self._gpu, self._tex, self._ctx, self._progs = {}, {}, None, None
+
+    def _setup(self, r):
+        if self._ctx is not r.ctx:
+            self.release()
+            self._ctx = r.ctx
+            self._progs = (r.ctx.program(vertex_shader=VS_FLAME, fragment_shader=FS_FLAME),
+                           r.ctx.program(vertex_shader=VS_FLAT, fragment_shader=FS_FLAT))
+            self._all_dirty = True
+        if self._all_dirty:
+            for vbo, ibo, vao in self._gpu.values():
+                for o in (vao, vbo, ibo):
+                    o.release()
+            for t in self._tex.values():
+                t.release()
+            self._gpu, self._tex, self._dirty = {}, {}, set()
+            self._all_dirty = False
+        for key in list(self._dirty):
+            g = self._gpu.get(key)
+            m = self.meshes.get(key)
+            if g is not None and m is not None and len(m["V"]) * 24 == g[0].size:
+                g[0].write(np.ascontiguousarray(m["V"]).tobytes())
+            elif g is not None:
+                for o in (g[2], g[0], g[1]):
+                    o.release()
+                del self._gpu[key]
+        self._dirty = set()
+
+    def _mesh_gpu(self, r, key):
+        g = self._gpu.get(key)
+        if g is None:
+            m = self.meshes[key]
+            if not len(m["V"]) or not len(m["I"]):
+                return None
+            vbo = r.ctx.buffer(np.ascontiguousarray(m["V"]).tobytes())
+            ibo = r.ctx.buffer(np.ascontiguousarray(m["I"], "<u2").tobytes())
+            vao = r.ctx.vertex_array(self._progs[0], [(vbo, "3f 2f 4f1", "aPos", "aUV", "aColor")], index_buffer=ibo, index_element_size=2)
+            g = self._gpu[key] = (vbo, ibo, vao)
+        return g
+
+    def _texture(self, r, ti):
+        if not (0 <= ti < len(self.textures)):
+            return r.white
+        t = self._tex.get(ti)
+        if t is None:
+            t = self._tex[ti] = r.make_texture(self.textures[ti])
+        return t
+
+    def __call__(self, r, view):
+        if not self.enabled or (not self.instances and not self.markers):
+            return
+        self._setup(r)
+        ctx = r.ctx
+        prog = self._progs[0]
+        ctx.enable(moderngl.DEPTH_TEST)
+        ctx.disable(moderngl.CULL_FACE)                       # both sides of a flame are drawn, as the game does (two_sided)
+        ctx.enable(moderngl.BLEND)
+        r.msaa.depth_mask = False
+        last = None
+        prog["uTex"].value = 0
+        prog["uGain"].value = float(self.gain)
+        for key, M in self.instances:
+            m = self.meshes.get(key)
+            g = self._mesh_gpu(r, key) if m is not None else None
+            if g is None:
+                continue
+            blend = m["blend"]
+            if blend != last:
+                ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE) if blend == 2 else (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
+                last = blend
+            self._texture(r, m["tex"]).use(0)
+            prog["uMVP"].write(r._mat(view.MVP @ np.asarray(M, np.float64)))
+            g[2].render(moderngl.TRIANGLES)
+        if self.markers:
+            ctx.disable(moderngl.DEPTH_TEST)                  # the outlet crosses show through the body
+            ctx.disable(moderngl.BLEND)
+            data = self._marker_triangles(view)
+            if len(data):
+                fp = self._progs[1]
+                buf = ctx.buffer(data.tobytes())
+                vao = ctx.vertex_array(fp, [(buf, "3f 3f", "aPos", "aCol")])
+                fp["uMVP"].write(r._mat(view.MVP))
+                vao.render(moderngl.TRIANGLES)
+                vao.release()
+                buf.release()
+        r.msaa.depth_mask = True
+        ctx.disable(moderngl.BLEND)
+        ctx.enable(moderngl.DEPTH_TEST)
+
+    def _marker_triangles(self, view):
+        """each marker = three axis segments, drawn as thin quads that face the camera (GL lines are one pixel wide)"""
+        out = []
+        right, up = view.R.T @ np.array([1.0, 0, 0]), view.R.T @ np.array([0, 1.0, 0])
+        w = max(view.upp, 1e-6) * 1.6
+        for p, size, col in self.markers:
+            p = np.asarray(p, np.float64)
+            for axis in range(3):
+                d = np.zeros(3)
+                d[axis] = size
+                a, b = p - d, p + d
+                for side in (right, up):
+                    o = side * w
+                    q = [a - o, a + o, b + o, b - o]
+                    for k in (0, 1, 2, 0, 2, 3):
+                        out.append(np.concatenate([q[k], col]))
+        return np.array(out, np.float32) if out else np.zeros((0, 6), np.float32)
+
+
+class TriLayer:
+    """Coloured, see-through triangles drawn over the car in the car's own space, a hair in front of the surface they lie on (the Lamps
+    tab: blue = the selected lamps, pink = lens candidates).  set_triangles(data): float32 array (N * 3, 7) = x y z r g b a per vertex,
+    colours 0..1.  Plain numpy in, a GPU buffer made lazily on the renderer's context.  Use it as renderer.extras.append(layer)."""
+    BIAS = 6e-4                                          # depth pulled toward the camera, as a fraction of the clip depth
+
+    def __init__(self):
+        self.data = np.zeros((0, 7), np.float32)
+        self.enabled = True
+        self._ctx = self._prog = self._vbo = self._vao = None
+        self._dirty = True
+
+    def set_triangles(self, data):
+        d = np.asarray(data, np.float32).reshape(-1, 7)
+        self.data = np.ascontiguousarray(d[: (len(d) // 3) * 3])
+        self._dirty = True
+
+    def clear(self):
+        self.set_triangles(np.zeros((0, 7), np.float32))
+
+    def release(self):
+        for o in (self._vao, self._vbo, self._prog):
+            try:
+                if o is not None:
+                    o.release()
+            except Exception:
+                pass
+        self._ctx = self._prog = self._vbo = self._vao = None
+        self._dirty = True
+
+    def __call__(self, r, view):
+        if not self.enabled or not len(self.data):
+            return
+        ctx = r.ctx
+        if self._ctx is not ctx:
+            self.release()
+            self._ctx = ctx
+            self._prog = ctx.program(vertex_shader=VS_TRI, fragment_shader=FS_TRI)
+        if self._dirty or self._vao is None:
+            for o in (self._vao, self._vbo):
+                if o is not None:
+                    o.release()
+            self._vbo = ctx.buffer(self.data.tobytes())
+            self._vao = ctx.vertex_array(self._prog, [(self._vbo, "3f 4f", "aPos", "aCol")])
+            self._dirty = False
+        ctx.enable(moderngl.DEPTH_TEST)
+        ctx.disable(moderngl.CULL_FACE)
+        ctx.enable(moderngl.BLEND)
+        ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
+        r.msaa.depth_mask = False
+        self._prog["uMVP"].write(r._mat(view.MVP))
+        self._prog["uBias"].value = float(self.BIAS)
+        self._vao.render(moderngl.TRIANGLES)
+        r.msaa.depth_mask = True
+        ctx.disable(moderngl.BLEND)
+
+
 class Renderer:
     """programs, targets and the draw: needs only a GL 3.3 context (the window's, or a headless one)"""
 
@@ -473,6 +718,8 @@ class Renderer:
         self.last = None                                  # (view, light, flags) of the last picture: the id pass reuses it
         self.ids_valid = False
         self.sel_ids = set()
+        self.extra_error = None
+        self.extras = []                                  # callables fn(renderer, view): drawn after the car (FlameLayer)
         self.max_aniso = 1.0
         try:
             self.max_aniso = float(ctx.max_anisotropy)
@@ -635,6 +882,15 @@ class Renderer:
         fb.depth_mask = True
         if model is not None and not model.empty:
             self._draw_car(model, view, light, lights, refl, use_ao, flat)
+        for extra in list(self.extras):
+            try:
+                extra(self, view)
+            except Exception:                                 # an overlay must never take the whole viewport down with it
+                self.extra_error = traceback.format_exc()
+                self.extras.remove(extra)
+                ctx.disable(moderngl.BLEND)
+                ctx.enable(moderngl.DEPTH_TEST)
+                self.msaa.depth_mask = True
         # ---- 2. resolve
         if self.msaa is not self.resolve and self.samples:
             ctx.copy_framebuffer(self.resolve, self.msaa)
@@ -877,6 +1133,23 @@ def _frame_class():
     return Frame
 
 
+PAUSED = False
+_VIEWPORTS = set()
+
+
+def pause():
+    """no redraws until resume() (the window is being re-laid out many times in a row, e.g. while the UI size is measured)"""
+    global PAUSED
+    PAUSED = True
+
+
+def resume():
+    global PAUSED
+    PAUSED = False
+    for v in list(_VIEWPORTS):
+        v.request_draw()
+
+
 class GLViewport:
     """the Tk widget (`.widget`), the camera it follows, and what is drawn.  Everything here runs on the Tk thread.
     on_fail(reason, detail) is called (once) when the GPU path cannot work: the owner then goes back to the software viewport."""
@@ -894,10 +1167,13 @@ class GLViewport:
         self._over, self._over_dirty = {}, False
         self.show_brake = self.show_lamps = True
         self.upp = 0.01
+        self.extras = []                      # drawn after the car, see FlameLayer
+        self.focus = None                     # (centre, radius) that frames the picture instead of the car's own bounds
         self.failed = None
         self.info = ""
         self._job = None
         self._dirty_sel = True
+        _VIEWPORTS.add(self)
         self.widget = self._make_widget(parent, width, height)
         self.widget.bind("<Destroy>", lambda e: self._destroyed() if e.widget is self.widget else None)
         self._dead = False
@@ -946,6 +1222,7 @@ class GLViewport:
 
     def _destroyed(self):
         self._dead = True
+        _VIEWPORTS.discard(self)
         self.model = None
 
     # --- what to draw
@@ -993,8 +1270,18 @@ class GLViewport:
         self.show_brake, self.show_lamps = bool(brake), bool(lamps)
         self.request_draw()
 
+    def set_focus(self, centre=None, radius=None):
+        """frame this point and radius instead of the model's bounding sphere (None = back to the model)"""
+        self.focus = None if centre is None else (np.asarray(centre, np.float64), float(radius))
+        self.request_draw()
+
     def set_background(self, top, bottom):
         self.bg = (top, bottom)
+        self.request_draw()
+
+    def reset_background(self):
+        """back to the default sky gradient (a module that set its own, e.g. the Lamps dark scene, calls this when it leaves)"""
+        self.bg = ((0.24, 0.29, 0.36), (0.09, 0.115, 0.15))
         self.request_draw()
 
     @property
@@ -1003,6 +1290,8 @@ class GLViewport:
 
     # --- drawing
     def request_draw(self):
+        if PAUSED:
+            return
         if self._job is None and not self._dead and not self.failed:
             try:
                 self._job = self.widget.after_idle(self._run)
@@ -1044,7 +1333,12 @@ class GLViewport:
                 self._dirty_sel = False
             W, H = max(self.widget.winfo_width(), 2), max(self.widget.winfo_height(), 2)
             m = self.model
-            view = View(self.cam, m.centre if m else np.zeros(3), m.radius if m else 1.0, (W, H), self.perspective)
+            if self.focus is not None:
+                centre, radius = self.focus
+            else:
+                centre, radius = (m.centre, m.radius) if m else (np.zeros(3), 1.0)
+            self.r.extras = self.extras
+            view = View(self.cam, centre, radius, (W, H), self.perspective)
             self.upp = view.upp
             light = SHADINGS.get(self.light_name, SHADINGS[DEFAULT_SHADING])
             self.r.draw(m, view, self._target(W, H), light=light, refl=self.refl, use_ao=self.use_ao, flat=light is None)
@@ -1077,6 +1371,7 @@ class GLViewport:
         light = SHADINGS.get(self.light_name, SHADINGS[DEFAULT_SHADING])
         if self.bg:
             self.r.top, self.r.bottom = self.bg
+        self.r.extras = self.extras
         img, _ = render_image(self.r, self.model, self.cam, (W, H), light, refl=self.refl, use_ao=self.use_ao,
                               flat=light is None, perspective_on=self.perspective)
         return img
@@ -1088,6 +1383,9 @@ class GLViewport:
                 self._make_current()
                 if self.model is not None:
                     self.model.release()
+                for ex in self.extras:
+                    if hasattr(ex, "release"):
+                        ex.release()
                 self.r.release()
         except Exception:
             pass

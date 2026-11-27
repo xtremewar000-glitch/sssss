@@ -1,6 +1,7 @@
 """Drives the real Models-tab code (wpk_edit.build_tab) with a fake tkinter: construction, open, browser, picking, props, log, save.
 NOT a visual test."""
 import os, sys, time, shutil, tempfile, unittest
+os.environ.setdefault("VPK_VIEWPORT", "soft")      # these tests drive the software viewport (the GPU one has tests/test_gl_*.py)
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE)); sys.path.insert(0, HERE)
 TMP = tempfile.mkdtemp()

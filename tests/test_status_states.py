@@ -145,7 +145,6 @@ class App(unittest.TestCase):
 
     def test_error_and_warning_paths(self):
         a = self.app
-        a.lamps.pack = None
         a.models.pack = None
         a.models_cmd("save")
         self.assertEqual(a.models.status.level, "warning")
