@@ -1,56 +1,42 @@
 # Builds vpk_tool for Windows and macOS on GitHub's own machines, so nobody needs a Mac.
-# Save this as  .github/workflows/build.yml  in your repo.  Then: Actions tab > "Build vpk_tool" > Run workflow.  Download the files under "Artifacts".
-# It finds the folder that holds vpk_tool.py by itself (wherever you uploaded it).
+# Put this file in your repo as  .github/workflows/build.yml  and set WORKDIR to the folder that holds vpk_tool.py
+# (e.g. tools/vpk_tool).  Then: Actions tab > "Build vpk_tool" > Run workflow  (or push a tag like v1).  Download the files under "Artifacts".
 name: Build vpk_tool
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+env:
+  WORKDIR: .
 jobs:
   windows:
     runs-on: windows-latest
+    defaults: {run: {working-directory: "${{ env.WORKDIR }}"}}
     steps:
       - uses: actions/checkout@v4
-      - name: Find the project folder
-        shell: bash
-        run: |
-          f=$(find . -name vpk_tool.py -not -path "./.git/*" | head -1)
-          if [ -z "$f" ]; then echo "vpk_tool.py is not in the repo: upload the vpk_tool folder"; ls -R | head -50; exit 1; fi
-          echo "APP=$(dirname "$f")" >> "$GITHUB_ENV"
-          echo "Project folder: $(dirname "$f")"
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: python -m pip install -r requirements.txt -r requirements-gpu.txt pyinstaller
-        working-directory: ${{ env.APP }}
       - run: >
           python -m PyInstaller --onefile --windowed --add-data "bake_ao.c;." --add-data "bake_ao_win.exe;."
           --add-data "assets;assets" --collect-all moderngl --collect-all glcontext --collect-all pyopengltk
           --collect-submodules OpenGL --hidden-import OpenGL.platform.win32 --name vpk_tool vpk_tool.py
-        working-directory: ${{ env.APP }}
       - uses: actions/upload-artifact@v4
-        with: {name: vpk_tool-windows, path: "${{ env.APP }}/dist/vpk_tool.exe"}
+        with: {name: vpk_tool-windows, path: "${{ env.WORKDIR }}/dist/vpk_tool.exe"}
   macos:
     strategy:
-      fail-fast: false
       matrix:
         include:
-          - {os: macos-latest, name: apple-silicon}  # M1 / M2 / M3 / M4 Macs
-          - {os: macos-15-intel, name: intel}        # Intel Macs (delete this line if you do not need Intel)
+          - {os: macos-latest, name: apple-silicon}  # M1 / M2 / M3 Macs
+          - {os: macos-15-intel, name: intel}            # Intel Macs
     runs-on: ${{ matrix.os }}
+    defaults: {run: {working-directory: "${{ env.WORKDIR }}"}}
     steps:
       - uses: actions/checkout@v4
-      - name: Find the project folder
-        shell: bash
-        run: |
-          f=$(find . -name vpk_tool.py -not -path "./.git/*" | head -1)
-          if [ -z "$f" ]; then echo "vpk_tool.py is not in the repo: upload the vpk_tool folder"; ls -R | head -50; exit 1; fi
-          echo "APP=$(dirname "$f")" >> "$GITHUB_ENV"
-          echo "Project folder: $(dirname "$f")"
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: sh build_mac.sh
-        working-directory: ${{ env.APP }}
-      - run: python3 gl_viewport.py info || true          # informational: the runner has no real GPU, so this may fail
-        working-directory: ${{ env.APP }}
+      - run: chmod +x build_mac.sh && ./build_mac.sh
+      # a quick look at what OpenGL the runner gives (informational; the runner has no real GPU, so this may fail)
+      - run: python3 gl_viewport.py info || true
       - uses: actions/upload-artifact@v4
-        with: {name: "vpk_tool-macos-${{ matrix.name }}", path: "${{ env.APP }}/dist/vpk_tool-mac.zip"}
+        with: {name: "vpk_tool-macos-${{ matrix.name }}", path: "${{ env.WORKDIR }}/dist/vpk_tool-mac.zip"}
