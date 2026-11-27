@@ -9,8 +9,11 @@ CC=${CC:-cc}
 case "$(uname -s)" in Darwin) OUT=libvpkplay.dylib ;; MINGW*|MSYS*|CYGWIN*) OUT=vpkplay.dll ;; *) OUT=libvpkplay.so ;; esac
 [ -f "$RE3/src/phys/phys_rc.c" ] || { echo "no src/phys/phys_rc.c in $RE3 (is that the Re3DXPlus folder?)"; exit 1; }
 [ -f "$RE3/tools/recomp/guard_sections.py" ] && python3 "$RE3/tools/recomp/guard_sections.py" "$RE3/src/phys/phys_rc.c" || true
+EXTRA=""
+# Windows: link the compiler's runtime in, so the .dll needs no libgcc / libwinpthread DLLs beside it
+case "$OUT" in vpkplay.dll) EXTRA="-static -static-libgcc" ;; esac
 $CC -O2 -shared -fPIC -ffp-contract=off -fvisibility=hidden -std=gnu99 -w -DRC_FPT=double \
     -I"$RE3/src" -I"$RE3/src/phys" -I"$HERE" \
     "$RE3/src/car.c" "$RE3/src/phys/phys_rc.c" "$RE3/src/phys/rc_runtime.c" "$HERE/vpk_playtest.c" \
-    -o "$HERE/$OUT" -lm
+    $EXTRA -o "$HERE/$OUT" -lm
 echo "built $HERE/$OUT"

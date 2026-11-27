@@ -88,9 +88,16 @@ class PlayCore:
 
     def __init__(self, lib_path):
         try:
-            self.lib = C.CDLL(lib_path)
+            if sys.platform == "win32":
+                try:
+                    os.add_dll_directory(os.path.dirname(os.path.abspath(lib_path)))     # its neighbours (a runtime DLL beside it)
+                except (AttributeError, OSError):
+                    pass
+                self.lib = C.CDLL(os.path.abspath(lib_path), winmode=0)
+            else:
+                self.lib = C.CDLL(lib_path)
         except OSError as ex:
-            raise PlayError("cannot load the physics library %s: %s" % (lib_path, ex))
+            raise PlayError("cannot load the physics library %s: %s%s" % (lib_path, ex, "\nIt needs a 64-bit build, and every DLL it depends on, beside it." if sys.platform == "win32" else ""))
         L = self.lib
         L.pt_size.restype = C.c_int
         if L.pt_size() != N_STATE:
