@@ -1,0 +1,38 @@
+# Put this file in the Re3DXPlus repo as .github/workflows/build_playtest_lib.yml, and the files of the tool's playtest_native/ folder
+# (vpk_playtest.c, build.sh) in the repo as tools/vpk_playtest/.  Actions > "Build Playtest physics library" > Run workflow.
+# The artifacts hold the library for each system: copy it next to vpk_tool (or pick it in Playtest > Game files > Physics library).
+name: Build Playtest physics library
+on:
+  workflow_dispatch:
+jobs:
+  lib:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, name: windows, out: vpkplay.dll}
+          - {os: macos-latest, name: macos-apple-silicon, out: libvpkplay.dylib}
+          - {os: macos-15-intel, name: macos-intel, out: libvpkplay.dylib}
+          - {os: ubuntu-latest, name: linux, out: libvpkplay.so}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc python
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          export CC=gcc
+          sh tools/vpk_playtest/build.sh .
+      - name: Build (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: sh tools/vpk_playtest/build.sh .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vpkplay-${{ matrix.name }}
+          path: tools/vpk_playtest/${{ matrix.out }}

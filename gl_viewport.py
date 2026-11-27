@@ -1155,6 +1155,7 @@ class GLViewport:
     on_fail(reason, detail) is called (once) when the GPU path cannot work: the owner then goes back to the software viewport."""
 
     def __init__(self, parent, cam, on_fail, width=600, height=340, on_draw=None):
+        self.view_fn = None            # callable(size) -> a View-like camera instead of the orbit camera (the Playtest's)
         self.cam = cam
         self.on_fail = on_fail
         self.on_draw = on_draw
@@ -1338,7 +1339,7 @@ class GLViewport:
             else:
                 centre, radius = (m.centre, m.radius) if m else (np.zeros(3), 1.0)
             self.r.extras = self.extras
-            view = View(self.cam, centre, radius, (W, H), self.perspective)
+            view = (self.view_fn((W, H)) if self.view_fn else None) or View(self.cam, centre, radius, (W, H), self.perspective)
             self.upp = view.upp
             light = SHADINGS.get(self.light_name, SHADINGS[DEFAULT_SHADING])
             self.r.draw(m, view, self._target(W, H), light=light, refl=self.refl, use_ao=self.use_ao, flat=light is None)

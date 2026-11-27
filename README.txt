@@ -655,3 +655,4 @@ v23: Blender-style layout (list | viewport | folding panels, draggable dividers)
 v24: Models and Livery pages: no sideways scrolling, folding side panels, draggable divider on Livery.
 v25: Backfire and Lamps are modules inside Vehicle Models (strip above the page), not separate rail pages.
 v26: Parts, Backfire and Lamps share one viewport and one car (Vehicle Models page).
+v27: Vehicle Models > Playtest (drive the open car on the game's map; see playtest_native/README.txt).

@@ -83,6 +83,10 @@ try:
 except ImportError:
     lamp_edit = None
 try:
+    import playtest                    # drive the open car on the game's map (needs the physics library)
+except Exception:
+    playtest = None
+try:
     import backfire_edit               # the 3rd tab: the exhaust flame (backfire.wpk + backfire.bfx)
 except ImportError:
     backfire_edit = None
@@ -1085,7 +1089,7 @@ def run_gui(_hook=None, start=None):
                 ttk.Label(strip, text="MODULE", foreground="#8f9eb2", font=("TkDefaultFont", 8, "bold")).pack(side="left", padx=(0, 8))
                 self.mod_frames["parts"] = tab2                  # one page, one viewport: the modules only swap panels inside it
                 for key, label, mod in (("parts", "Parts & viewport", True), ("backfire", "Backfire flames", backfire_edit),
-                                        ("lamps", "Lamps", lamp_edit)):
+                                        ("lamps", "Lamps", lamp_edit), ("playtest", "Playtest", playtest)):
                     if mod:
                         ttk.Radiobutton(strip, text=label, value=key, variable=self.mod_var, style="Toolbutton",
                                         command=lambda k=key: self.show_module(k)).pack(side="left", padx=2)
@@ -1101,6 +1105,9 @@ def run_gui(_hook=None, start=None):
                 if lamp_edit:
                     self.lamps = lamp_edit.build_tab(holder, r, self, host=self.models)
                     self.mod_objs["lamps"] = self.lamps
+                if playtest:
+                    self.playtest = playtest.build_tab(holder, r, self, host=self.models)
+                    self.mod_objs["playtest"] = self.playtest
                 if wheels_tab:
                     self.wheels = wheels_tab.build_tab(tab4, r, self)
                 if meters_edit:
@@ -1112,7 +1119,7 @@ def run_gui(_hook=None, start=None):
                 for i, name in enumerate(self.page_names[:9]):
                     self.go_menu.add_command(label=name, accelerator="Ctrl+%d" % (i + 1), command=lambda i=i: self.show_page(i))
                 self.go_menu.add_separator()
-                for key, label in (("backfire", "Vehicle Models  >  Backfire flames"), ("lamps", "Vehicle Models  >  Lamps")):
+                for key, label in (("backfire", "Vehicle Models  >  Backfire flames"), ("lamps", "Vehicle Models  >  Lamps"), ("playtest", "Vehicle Models  >  Playtest")):
                     if key in self.mod_frames:
                         self.go_menu.add_command(label=label, command=lambda k=key: self.show_module(k))
                 r = tab1                                   # everything below is the sticker page

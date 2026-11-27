@@ -27,15 +27,15 @@ jobs:
     strategy:
       matrix:
         include:
-          - {os: macos-14, name: apple-silicon}      # M1 / M2 / M3 Macs
-          - {os: macos-13, name: intel}              # Intel Macs
+          - {os: macos-latest, name: apple-silicon}  # M1 / M2 / M3 Macs
+          - {os: macos-15-intel, name: intel}            # Intel Macs
     runs-on: ${{ matrix.os }}
     defaults: {run: {working-directory: "${{ env.WORKDIR }}"}}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: ./build_mac.sh
+      - run: chmod +x build_mac.sh && ./build_mac.sh
       # a quick look at what OpenGL the runner gives (informational; the runner has no real GPU, so this may fail)
       - run: python3 gl_viewport.py info || true
       - uses: actions/upload-artifact@v4

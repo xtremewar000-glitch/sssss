@@ -418,3 +418,15 @@ Camera (v26b): Backfire opens on the whole car (framed like Parts); 'Zoom to exh
 v26c: Backfire 'Zoom to exhaust' and its view buttons, and Lamps' View / Zoom boxes, are gone: all modules use the Vehicle Models view buttons and Fit / reset camera.
 
 v26d: the app starts on Vehicle Models > Parts & viewport.
+
+Playtest (v27)
+--------------
+Vehicle Models > Playtest drives the car open in Parts on the game's map with the game's own physics, gearbox and camera.
+ - playtest.py: the module + PlayCore (ctypes bridge to the physics library; vpk_playtest.c wraps the Re3DXPlus repo's car.c + phys_rc.c).
+ - playtest_gl.py: the map, sky and car drawn inside the shared GPU viewport (a layer + the arcade's camera through gl_viewport.view_fn).
+ - stage_wpk.py: reader for the game's map packs (WPK2).
+ - playtest_native/: the C wrapper, build.sh, a GitHub workflow for the Re3DXPlus repo, README.txt.
+Needs the game's data folder (phys.img, carconfig/, <city>.wpk, sky_<city>.wpk, night variants) and the library (vpkplay.dll /
+libvpkplay.dylib / libvpkplay.so).  Not drawn yet: traffic, gloss / reflections, headlight beams, HUD, the other cities' arrow boards.
+Verified here: the physics through the library (Linux, with the real phys.img), the map reader on hakone.wpk, the maths.  NOT verified:
+anything drawn on a GPU, Windows / macOS library builds.
